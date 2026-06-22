@@ -35,3 +35,10 @@ The `conformance` command emits a signed artifact saying which local protocol
 documents this implementation claims to speak. It is an explicit local
 statement of contract support, not a claim that upstream PromiseGrid has frozen
 those exact docs for everyone else.
+
+## Current Operator Reminder
+
+When inspecting `data/artifacts.jsonl`, remember that rows there are local
+index entries over raw CAS objects. They are documented field-by-field in
+`docs/promisegrid-app-design.md` and should not be mistaken for the protocol
+artifact bytes themselves.

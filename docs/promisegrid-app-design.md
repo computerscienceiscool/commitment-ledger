@@ -41,3 +41,41 @@ between upstream-open areas and local missing pieces.
 - JSONL rows index and summarize artifact history
 - Markdown records stay human-readable and retain artifact CID plus protocol
   `pCID`
+
+## Artifact Index Anatomy
+
+The local artifact index in `data/artifacts.jsonl` is a projection over raw CAS
+objects. One row currently looks like this:
+
+```json
+{
+  "artifact_cid": "bafkreidfay3cjjnzdvi57vayxuywwnzv7fivggfycqvhjwcwyen3udqxhe",
+  "protocol_pcid": "bafkreibbmx4swcujke52q5ak7bx2p5so6caupcxh7trb25owz5bxmj5dnq",
+  "kind": "commitment_promise",
+  "signer": "Alice",
+  "signer_key_id": "alice-ed25519-v1",
+  "payload_cid": "bafkreidzsnd5xhe4lnbohcr2ghcd7i3qo7kw5ce2lleeob4wg74p2tk5ei",
+  "proof_cid": "bafkreiefoonk5wfdh36swm6ikhxkjphpo5nelem4n5vnn4tpielsmfgmni",
+  "observed_at": "2026-06-22T12:23:40-07:00",
+  "related_id": "COMMITMENT-20260622-alice-001"
+}
+```
+
+Field meaning:
+
+- `artifact_cid`: CID of the full emitted grid-envelope bytes stored in local CAS
+- `protocol_pcid`: content-addressed identity of the protocol doc that owns the payload meaning
+- `kind`: local artifact family such as `commitment_promise`, `commitment_evidence`, `commitment_assessment`, or `implementation_conformance`
+- `signer`: human-facing signer name used by the local identity store
+- `signer_key_id`: local durable key label used for the signing key material
+- `payload_cid`: CID of the raw payload bytes before proof wrapping
+- `proof_cid`: CID of the raw proof bytes containing signature material
+- `observed_at`: local timestamp when this implementation emitted or indexed the artifact
+- `related_id`: local projection ID tied to this artifact, such as a `COMMITMENT-*`, `EVIDENCE-*`, or `ASSESSMENT-*`
+- `related_cid`: optional CID reference to another artifact this row points at, such as the commitment artifact referenced by evidence or assessment
+
+Important distinction:
+
+- `artifact_cid` is the primary content-addressed identity for the emitted message bytes
+- `related_id` is only a local projection handle for reports and operator workflows
+- `protocol_pcid` identifies which frozen local protocol doc explains how to interpret the payload

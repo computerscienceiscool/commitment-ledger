@@ -26,7 +26,7 @@ func TestExpireDueUpdatesOnlyOverdueOpenCommitments(t *testing.T) {
 
 func TestCreateRejectsUnknownTarget(t *testing.T) {
 	store := ledger.NewStore(t.TempDir())
-	_, err := Create(store, "JJ", "repo", "main", []string{"repo/main/TODO-binap"}, "2026-06-28", "I promise.", time.Now())
+	_, err := Create(store, "JJ", "repo", "main", []string{"repo/main/TODO-ravud"}, "2026-06-28", "I promise.", time.Now())
 	if err == nil {
 		t.Fatal("expected error for unknown target")
 	}

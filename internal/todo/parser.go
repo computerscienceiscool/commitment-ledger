@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	indexLinePattern   = regexp.MustCompile("^\\s*(?:\\[( |x|X)\\]\\s+)?([A-Z]+-[a-z]{5}|\\d{3})\\s*-\\s*(.+?)\\s*$")
+	indexLinePattern   = regexp.MustCompile("^\\s*(?:[-*]\\s+)?(?:\\[( |x|X)\\]\\s+)?([A-Z]+-[a-z]{5}|\\d{3})\\s*-\\s*(.+?)\\s*$")
 	detailLinkPattern  = regexp.MustCompile("^(.*?)\\s+\\(`([^`]+)`\\)\\s*$")
 	subtaskLinePattern = regexp.MustCompile("^\\s*[-*]\\s+\\[( |x|X)\\]\\s+((?:\\d+)(?:\\.\\d+)*)\\.?\\s+(.+?)\\s*$")
 )

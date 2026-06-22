@@ -34,7 +34,7 @@ The payload bytes are UTF-8 JSON with this shape:
   "repo": "wire-lab",
   "branch": "main",
   "source_commit": "def456",
-  "target": "wire-lab/main/TODO-binap/2.1",
+  "target": "wire-lab/main/TODO-ravud/2.1",
   "evidence_kind": "todo_checked",
   "observed_at": "2026-06-24T09:00:00-07:00",
   "observed_bytes_cid": "bafy...",

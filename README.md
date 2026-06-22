@@ -49,3 +49,8 @@ commitment-ledger report --promiser JJ
 - Commitments, evidence, assessments, and conformance claims are emitted as
   signed `grid([42(pCID), payload, proof])` artifacts stored in local CAS.
 - JSONL and Markdown files are projections over those raw artifacts.
+
+## Demo Docs
+
+- `docs/demo-plan.md` lays out a real-repo demo using Alice, Bob, Dave, and Mallory roles.
+- `docs/demo-script.md` is the spoken walkthrough with commands, files, and demo narration.

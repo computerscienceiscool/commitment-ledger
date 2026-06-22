@@ -18,7 +18,7 @@ func TestStoreWritesJSONLAndMarkdown(t *testing.T) {
 		Promiser:     "JJ",
 		Repo:         "repo",
 		Branch:       "main",
-		Targets:      []string{"repo/main/TODO-binap/1"},
+		Targets:      []string{"repo/main/TODO-ravud/1"},
 		PromiseText:  "I promise to finish subtask 1.",
 		CreatedAt:    "2026-06-22T11:00:00-07:00",
 		DueDate:      "2026-06-28",
@@ -35,7 +35,7 @@ func TestStoreWritesJSONLAndMarkdown(t *testing.T) {
 		Repo:         "repo",
 		Branch:       "main",
 		Commit:       "abc123",
-		Target:       "repo/main/TODO-binap/1",
+		Target:       "repo/main/TODO-ravud/1",
 		ObservedAt:   "2026-06-22T12:00:00-07:00",
 		Notes:        "Checked off in detail file.",
 	}
