@@ -1,0 +1,14 @@
+# TODO Index
+
+This list is sorted by priority. TODO handles are stable proquint IDs.
+
+- [x] TODO-karud - Freeze initial Commitment Ledger protocol docs and pCID workflow (`TODO/TODO-karud-freeze-protocol-docs-and-pcid-workflow.md`)
+- [x] TODO-pazat - Add local CAS and CID-addressed artifact retention (`TODO/TODO-pazat-local-cas-and-cid-retention.md`)
+- [x] TODO-rovik - Emit signed grid-envelope artifacts for commitments and evidence (`TODO/TODO-rovik-signed-grid-artifacts.md`)
+- [x] TODO-zunod - Publish implementation conformance claims and projection rules (`TODO/TODO-zunod-conformance-and-projections.md`)
+- [x] TODO-jafud - Bootstrap repo layout and config-driven CLI skeleton (`TODO/TODO-jafud-bootstrap-layout-and-config.md`)
+- [x] TODO-lodab - Observe tracked repos and capture branch-specific git state (`TODO/TODO-lodab-observe-repos-and-git-state.md`)
+- [x] TODO-mipog - Parse numeric and proquint TODOs with detail-file subtasks (`TODO/TODO-mipog-parse-todos-and-subtasks.md`)
+- [x] TODO-tuvan - Store append-only ledger records in JSONL and Markdown (`TODO/TODO-tuvan-ledger-record-storage.md`)
+- [x] TODO-sorik - Implement commitment lifecycle commands and reports (`TODO/TODO-sorik-commitment-lifecycle-and-reports.md`)
+- [ ] TODO-vubat - Add deterministic tests for parsing, storage, and status transitions (`TODO/TODO-vubat-core-test-coverage.md`)

@@ -1,0 +1,151 @@
+package report
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+
+	"commitment-ledger/internal/model"
+)
+
+type RepoSummary struct {
+	Repo              string
+	Branch            string
+	OpenTODOs         int
+	OpenSubtasks      int
+	ActiveCommitments int
+	Expired           int
+	Kept              int
+}
+
+type PersonSummary struct {
+	Promiser          string
+	OpenCommitments   int
+	Kept              int
+	PartiallyKept     int
+	ExpiredUnassessed int
+	Broken            int
+}
+
+type WorkSummary struct {
+	Target            string
+	Status            string
+	Subtasks          int
+	CompletedSubtasks int
+	Commitments       []model.Commitment
+}
+
+func RepoSummaries(workItems map[string]model.WorkItem, commitments map[string]model.Commitment) []RepoSummary {
+	summaries := map[string]*RepoSummary{}
+	for _, item := range workItems {
+		key := item.Repo + "/" + item.Branch
+		summary := summaries[key]
+		if summary == nil {
+			summary = &RepoSummary{Repo: item.Repo, Branch: item.Branch}
+			summaries[key] = summary
+		}
+		if item.IsSubtask {
+			if item.Status == "open" {
+				summary.OpenSubtasks++
+			}
+			continue
+		}
+		if item.Status == "open" {
+			summary.OpenTODOs++
+		}
+	}
+	for _, item := range commitments {
+		key := item.Repo + "/" + item.Branch
+		summary := summaries[key]
+		if summary == nil {
+			summary = &RepoSummary{Repo: item.Repo, Branch: item.Branch}
+			summaries[key] = summary
+		}
+		switch item.Status {
+		case model.StatusOpen:
+			summary.ActiveCommitments++
+		case model.StatusExpiredUnassessed:
+			summary.Expired++
+		case model.StatusKept:
+			summary.Kept++
+		}
+	}
+	out := make([]RepoSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		out = append(out, *summary)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Repo == out[j].Repo {
+			return out[i].Branch < out[j].Branch
+		}
+		return out[i].Repo < out[j].Repo
+	})
+	return out
+}
+
+func PersonSummaries(commitments map[string]model.Commitment) []PersonSummary {
+	summaries := map[string]*PersonSummary{}
+	for _, item := range commitments {
+		summary := summaries[item.Promiser]
+		if summary == nil {
+			summary = &PersonSummary{Promiser: item.Promiser}
+			summaries[item.Promiser] = summary
+		}
+		switch item.Status {
+		case model.StatusOpen:
+			summary.OpenCommitments++
+		case model.StatusKept:
+			summary.Kept++
+		case model.StatusPartiallyKept:
+			summary.PartiallyKept++
+		case model.StatusExpiredUnassessed:
+			summary.ExpiredUnassessed++
+		case model.StatusBroken:
+			summary.Broken++
+		}
+	}
+	out := make([]PersonSummary, 0, len(summaries))
+	for _, summary := range summaries {
+		out = append(out, *summary)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Promiser < out[j].Promiser })
+	return out
+}
+
+func FindWorkSummary(target string, workItems map[string]model.WorkItem, commitments map[string]model.Commitment) (WorkSummary, error) {
+	item, ok := workItems[target]
+	if !ok {
+		return WorkSummary{}, fmt.Errorf("unknown work target %q", target)
+	}
+
+	parentID := item.WorkID
+	if item.IsSubtask {
+		parentID = item.ParentWork
+	}
+
+	summary := WorkSummary{
+		Target: model.WorkTarget(item.Repo, item.Branch, parentID),
+		Status: item.Status,
+	}
+	for _, candidate := range workItems {
+		if candidate.Repo != item.Repo || candidate.Branch != item.Branch || candidate.ParentWork != parentID {
+			continue
+		}
+		summary.Subtasks++
+		if candidate.Status == "complete" {
+			summary.CompletedSubtasks++
+		}
+	}
+	for _, candidate := range commitments {
+		for _, commitmentTarget := range candidate.Targets {
+			if commitmentTarget == summary.Target || strings.HasPrefix(commitmentTarget, summary.Target+"/") {
+				summary.Commitments = append(summary.Commitments, candidate)
+				break
+			}
+		}
+	}
+	sort.Slice(summary.Commitments, func(i, j int) bool {
+		return summary.Commitments[i].CommitmentID < summary.Commitments[j].CommitmentID
+	})
+	return summary, nil
+}
