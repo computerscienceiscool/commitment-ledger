@@ -11,8 +11,10 @@ import (
 
 const (
 	CommitmentPromise         = "commitment-promise-v1"
-	CommitmentEvidence        = "commitment-evidence-v1"
-	CommitmentAssessment      = "commitment-assessment-v1"
+	CommitmentEvidenceV1      = "commitment-evidence-v1"
+	CommitmentEvidence        = "commitment-evidence-v2"
+	CommitmentAssessmentV1    = "commitment-assessment-v1"
+	CommitmentAssessment      = "commitment-assessment-v2"
 	ImplementationConformance = "implementation-conformance-v1"
 )
 
@@ -39,7 +41,9 @@ func (r Registry) Specs() []Spec {
 func Load(root string) (Registry, error) {
 	names := []string{
 		CommitmentPromise,
+		CommitmentEvidenceV1,
 		CommitmentEvidence,
+		CommitmentAssessmentV1,
 		CommitmentAssessment,
 		ImplementationConformance,
 	}

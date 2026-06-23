@@ -83,10 +83,15 @@ Observed work targets are always branch-qualified, for example
 - v0.1 observes local git clones only.
 - Source repositories are not edited by this tool.
 - Ledger records stay in this repository.
+- Manual evidence must stay within the referenced commitment's repo, branch, and promised target scope.
+- Assessments may move commitments from `open` or `expired_unassessed` into a terminal outcome, but they do not overwrite already-finalized commitments.
+- Assessment basis references must resolve to evidence artifacts for the same commitment.
 - Protocol docs under `docs/protocols/` define local pCIDs by exact document bytes.
+- Current emission stays on `commitment-promise-v1`, `implementation-conformance-v1`, `commitment-evidence-v2`, and `commitment-assessment-v2`; older frozen docs remain in-repo for historical pCID continuity.
 - Commitments, evidence, assessments, and conformance claims are emitted as
   signed `grid([42(pCID), payload, proof])` artifacts stored in local CAS.
 - JSONL and Markdown files are projections over those raw artifacts.
+- Repo status summaries surface kept and non-kept terminal outcomes separately.
 
 ## Demo Docs
 

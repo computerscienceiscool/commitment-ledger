@@ -16,6 +16,12 @@ type RepoSummary struct {
 	ActiveCommitments int
 	Expired           int
 	Kept              int
+	PartiallyKept     int
+	Broken            int
+	Refused           int
+	Delegated         int
+	Superseded        int
+	Extended          int
 }
 
 type PersonSummary struct {
@@ -68,6 +74,18 @@ func RepoSummaries(workItems map[string]model.WorkItem, commitments map[string]m
 			summary.Expired++
 		case model.StatusKept:
 			summary.Kept++
+		case model.StatusPartiallyKept:
+			summary.PartiallyKept++
+		case model.StatusBroken:
+			summary.Broken++
+		case model.StatusRefused:
+			summary.Refused++
+		case model.StatusDelegated:
+			summary.Delegated++
+		case model.StatusSuperseded:
+			summary.Superseded++
+		case model.StatusExtended:
+			summary.Extended++
 		}
 	}
 	out := make([]RepoSummary, 0, len(summaries))
@@ -119,13 +137,17 @@ func FindWorkSummary(target string, workItems map[string]model.WorkItem, commitm
 	}
 
 	parentID := item.WorkID
+	status := item.Status
 	if item.IsSubtask {
 		parentID = item.ParentWork
+		if parent, ok := workItems[model.WorkTarget(item.Repo, item.Branch, parentID)]; ok {
+			status = parent.Status
+		}
 	}
 
 	summary := WorkSummary{
 		Target: model.WorkTarget(item.Repo, item.Branch, parentID),
-		Status: item.Status,
+		Status: status,
 	}
 	for _, candidate := range workItems {
 		if candidate.Repo != item.Repo || candidate.Branch != item.Branch || candidate.ParentWork != parentID {

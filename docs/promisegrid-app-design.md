@@ -23,8 +23,8 @@ between upstream-open areas and local missing pieces.
 ## Initial Artifact Families
 
 - `commitment-promise-v1`
-- `commitment-evidence-v1`
-- `commitment-assessment-v1`
+- `commitment-evidence-v2`
+- `commitment-assessment-v2`
 - `implementation-conformance-v1`
 
 ## Initial Local Choices

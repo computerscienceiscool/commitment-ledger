@@ -15,6 +15,9 @@ func Create(existing []model.Assessment, current model.Commitment, assessor stri
 	if !commitment.ValidAssessmentStatus(status) {
 		return model.Assessment{}, model.Commitment{}, fmt.Errorf("invalid assessment status %q", status)
 	}
+	if current.Status != model.StatusOpen && current.Status != model.StatusExpiredUnassessed {
+		return model.Assessment{}, model.Commitment{}, fmt.Errorf("cannot assess commitment %q in status %q", current.CommitmentID, current.Status)
+	}
 
 	assessment := model.Assessment{
 		AssessmentID: nextAssessmentID(existing, now),

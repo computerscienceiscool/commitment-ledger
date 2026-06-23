@@ -184,7 +184,13 @@ func runStatus(store *ledger.Store) error {
 		fmt.Printf("Open subtasks: %d\n", summary.OpenSubtasks)
 		fmt.Printf("Active commitments: %d\n", summary.ActiveCommitments)
 		fmt.Printf("Expired unassessed: %d\n", summary.Expired)
-		fmt.Printf("Kept commitments: %d\n\n", summary.Kept)
+		fmt.Printf("Kept commitments: %d\n", summary.Kept)
+		fmt.Printf("Partially kept: %d\n", summary.PartiallyKept)
+		fmt.Printf("Broken: %d\n", summary.Broken)
+		fmt.Printf("Refused: %d\n", summary.Refused)
+		fmt.Printf("Delegated: %d\n", summary.Delegated)
+		fmt.Printf("Superseded: %d\n", summary.Superseded)
+		fmt.Printf("Extended: %d\n\n", summary.Extended)
 	}
 	return nil
 }
@@ -246,11 +252,9 @@ func runEvidence(root string, store *ledger.Store, registry protocol.Registry, n
 	if current.ArtifactCID == "" {
 		return fmt.Errorf("commitment %q has no artifact cid; recreate it through the PromiseGrid path", *commitmentID)
 	}
-	if *repo == "" {
-		*repo = current.Repo
-	}
-	if *branch == "" {
-		*branch = current.Branch
+	*repo, *branch, err = validateEvidenceInput(store, current, *repo, *branch, *target)
+	if err != nil {
+		return err
 	}
 
 	existing, err := store.LoadEvidence()
@@ -304,7 +308,10 @@ func runAssess(root string, store *ledger.Store, registry protocol.Registry, now
 	if err != nil {
 		return err
 	}
-	resolvedBasis := resolveBasis(basis, evidenceItems)
+	resolvedBasis, err := resolveBasis(basis, evidenceItems, current.CommitmentID)
+	if err != nil {
+		return err
+	}
 	assessmentRecord, updated, err := assessment.Create(assessments, current, *assessor, *status, resolvedBasis, *notes, now)
 	if err != nil {
 		return err
@@ -352,6 +359,50 @@ func runConformance(root string, store *ledger.Store, registry protocol.Registry
 	}
 	fmt.Println(artifactCID)
 	return nil
+}
+
+func validateEvidenceInput(store *ledger.Store, current model.Commitment, repo string, branch string, target string) (string, string, error) {
+	if repo == "" {
+		repo = current.Repo
+	}
+	if branch == "" {
+		branch = current.Branch
+	}
+	if repo != current.Repo || branch != current.Branch {
+		return "", "", fmt.Errorf("evidence repo/branch must match commitment %s/%s", current.Repo, current.Branch)
+	}
+	if target == "" {
+		return repo, branch, nil
+	}
+
+	targetRepo, targetBranch, _, ok := model.SplitTarget(target)
+	if !ok {
+		return "", "", fmt.Errorf("invalid target %q", target)
+	}
+	if targetRepo != current.Repo || targetBranch != current.Branch {
+		return "", "", fmt.Errorf("target %q does not match commitment repo=%s branch=%s", target, current.Repo, current.Branch)
+	}
+
+	workItems, err := store.LoadLatestWorkItems()
+	if err != nil {
+		return "", "", err
+	}
+	if _, ok := workItems[target]; !ok {
+		return "", "", fmt.Errorf("unknown target %q; run scan first", target)
+	}
+	if !commitmentCoversTarget(current, target) {
+		return "", "", fmt.Errorf("target %q is outside commitment %q", target, current.CommitmentID)
+	}
+	return repo, branch, nil
+}
+
+func commitmentCoversTarget(current model.Commitment, target string) bool {
+	for _, promised := range current.Targets {
+		if target == promised || strings.HasPrefix(target, promised+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func runReport(store *ledger.Store, args []string) error {
@@ -428,7 +479,13 @@ func runReport(store *ledger.Store, args []string) error {
 		fmt.Printf("Open subtasks: %d\n", item.OpenSubtasks)
 		fmt.Printf("Active commitments: %d\n", item.ActiveCommitments)
 		fmt.Printf("Expired unassessed: %d\n", item.Expired)
-		fmt.Printf("Kept commitments: %d\n\n", item.Kept)
+		fmt.Printf("Kept commitments: %d\n", item.Kept)
+		fmt.Printf("Partially kept: %d\n", item.PartiallyKept)
+		fmt.Printf("Broken: %d\n", item.Broken)
+		fmt.Printf("Refused: %d\n", item.Refused)
+		fmt.Printf("Delegated: %d\n", item.Delegated)
+		fmt.Printf("Superseded: %d\n", item.Superseded)
+		fmt.Printf("Extended: %d\n\n", item.Extended)
 	}
 	return nil
 }
@@ -619,22 +676,42 @@ func persistProtocolSpecs(store *ledger.Store, registry protocol.Registry) error
 	return nil
 }
 
-func resolveBasis(basis []string, evidenceItems []model.Evidence) []string {
-	byID := make(map[string]string, len(evidenceItems))
+func resolveBasis(basis []string, evidenceItems []model.Evidence, commitmentID string) ([]string, error) {
+	byID := make(map[string]model.Evidence, len(evidenceItems))
+	byCID := make(map[string]model.Evidence, len(evidenceItems))
 	for _, item := range evidenceItems {
 		if item.ArtifactCID != "" {
-			byID[item.EvidenceID] = item.ArtifactCID
+			byID[item.EvidenceID] = item
+			byCID[item.ArtifactCID] = item
 		}
 	}
 	out := make([]string, 0, len(basis))
+	seen := make(map[string]struct{}, len(basis))
 	for _, item := range basis {
-		if cid, ok := byID[item]; ok {
-			out = append(out, cid)
+		evidence, ok := byID[item]
+		if ok {
+			if evidence.CommitmentID != commitmentID {
+				return nil, fmt.Errorf("basis evidence %q belongs to commitment %q, not %q", item, evidence.CommitmentID, commitmentID)
+			}
+			if _, seenCID := seen[evidence.ArtifactCID]; !seenCID {
+				out = append(out, evidence.ArtifactCID)
+				seen[evidence.ArtifactCID] = struct{}{}
+			}
 			continue
 		}
-		out = append(out, item)
+		evidence, ok = byCID[item]
+		if !ok {
+			return nil, fmt.Errorf("unknown basis reference %q", item)
+		}
+		if evidence.CommitmentID != commitmentID {
+			return nil, fmt.Errorf("basis evidence %q belongs to commitment %q, not %q", item, evidence.CommitmentID, commitmentID)
+		}
+		if _, seenCID := seen[item]; !seenCID {
+			out = append(out, item)
+			seen[item] = struct{}{}
+		}
 	}
-	return out
+	return out, nil
 }
 
 type stringList []string

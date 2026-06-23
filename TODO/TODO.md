@@ -2,6 +2,7 @@
 
 This list is sorted by priority. TODO handles are stable proquint IDs.
 
+- [x] TODO-babab - Harden assessment, evidence, and reporting invariants (`TODO/TODO-babab-harden-assessment-evidence-and-reporting-invariants.md`)
 - [x] TODO-karud - Freeze initial Commitment Ledger protocol docs and pCID workflow (`TODO/TODO-karud-freeze-protocol-docs-and-pcid-workflow.md`)
 - [x] TODO-pazat - Add local CAS and CID-addressed artifact retention (`TODO/TODO-pazat-local-cas-and-cid-retention.md`)
 - [x] TODO-rovik - Emit signed grid-envelope artifacts for commitments and evidence (`TODO/TODO-rovik-signed-grid-artifacts.md`)
