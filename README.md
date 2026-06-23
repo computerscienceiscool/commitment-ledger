@@ -4,6 +4,17 @@ Commitment Ledger is a CLI-first PromiseGrid app prototype for tracking
 commitments made against existing repository TODO work, recording evidence, and
 preserving later assessment as signed, CID-addressed protocol artifacts.
 
+## Quick Start
+
+1. Populate `config/repos.json` with the local git repos you want to observe.
+   The tracked file in this repo ships empty on purpose.
+2. Run `go run ./cmd/commitment-ledger scan --config config/repos.json` to
+   discover work items from those repos.
+3. Create commitments against discovered branch-qualified targets with
+   `go run ./cmd/commitment-ledger commit ...`.
+4. Re-run `scan` to derive local evidence, then use `assess` to record the
+   final judgment.
+
 ## Layout
 
 - `cmd/commitment-ledger`: CLI entrypoint
@@ -39,6 +50,33 @@ commitment-ledger expire
 commitment-ledger status
 commitment-ledger report --promiser JJ
 ```
+
+## Config Contract
+
+Each repo entry in `config/repos.json` currently supports these fields:
+
+- `name`: stable repo name used in work targets and reports
+- `local_path`: local git clone path to observe
+- `branch`: expected checked-out branch; `scan` fails if the repo is on a different branch
+- `todo_file`: path to the TODO index file inside the observed repo
+- `enabled`: whether the repo participates in scans
+
+The JSON shape also includes `provider` and `url`, but v0.1 is local-only and
+does not use them yet.
+
+## TODO Parser Contract
+
+The current parser recognizes:
+
+- top-level items shaped like `001 - Title` or `TODO-ravud - Title`
+- optional checkboxes on those lines, such as `- [x] TODO-ravud - Title`
+- optional detail-file links in backticks, such as
+  ``TODO-ravud - Title (`TODO/TODO-ravud-title.md`)``
+- subtask lines in detail files shaped like `- [ ] 1. Do thing` or
+  `- [x] 2.1 Do thing`
+
+Observed work targets are always branch-qualified, for example
+`repo/main/TODO-ravud/1`.
 
 ## Notes
 

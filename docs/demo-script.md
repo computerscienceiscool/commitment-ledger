@@ -158,7 +158,8 @@ What to point at:
 Commands:
 
 ```bash
-cat /home/jj/lab/commitment-ledger/records/commitments/COMMITMENT-20260622-alice-001.md
+COMMITMENT_ID=$(tail -n 1 /home/jj/lab/commitment-ledger/data/commitments.jsonl | sed -E 's/.*"commitment_id":"([^"]+)".*/\1/')
+cat /home/jj/lab/commitment-ledger/records/commitments/$COMMITMENT_ID.md
 ```
 
 What to say:
@@ -180,7 +181,7 @@ What to point at:
 Commands:
 
 ```bash
-grep 'COMMITMENT-20260622-alice-001' /home/jj/lab/commitment-ledger/data/artifacts.jsonl
+grep "$COMMITMENT_ID" /home/jj/lab/commitment-ledger/data/artifacts.jsonl
 ```
 
 What to say:
@@ -256,7 +257,7 @@ Commands:
 EVIDENCE_ID=$(tail -n 1 /home/jj/lab/commitment-ledger/data/evidence.jsonl | sed -E 's/.*"evidence_id":"([^"]+)".*/\\1/')
 
 GOCACHE=/tmp/gocache go run ./cmd/commitment-ledger assess \
-  --commitment COMMITMENT-20260622-alice-001 \
+  --commitment "$COMMITMENT_ID" \
   --assessor Alice \
   --status kept \
   --basis "$EVIDENCE_ID" \
@@ -278,7 +279,8 @@ What to say:
 Commands:
 
 ```bash
-cat /home/jj/lab/commitment-ledger/records/assessments/ASSESSMENT-20260622-001.md
+ASSESSMENT_ID=$(tail -n 1 /home/jj/lab/commitment-ledger/data/assessments.jsonl | sed -E 's/.*"assessment_id":"([^"]+)".*/\1/')
+cat /home/jj/lab/commitment-ledger/records/assessments/$ASSESSMENT_ID.md
 GOCACHE=/tmp/gocache go run ./cmd/commitment-ledger report --promiser Alice
 ```
 

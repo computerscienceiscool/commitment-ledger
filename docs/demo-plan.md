@@ -145,7 +145,9 @@ This lets the demo show that:
 
 ## Commitment Ledger Config
 
-Populate [config/repos.json](/home/jj/lab/commitment-ledger/config/repos.json) with all four repos:
+Populate [config/repos.json](/home/jj/lab/commitment-ledger/config/repos.json) with all four repos before the first scan. The checked-in file currently ships with an empty `repos` list so the repo does not point at any machine-specific paths by default.
+
+Example:
 
 ```json
 {
@@ -189,6 +191,11 @@ Populate [config/repos.json](/home/jj/lab/commitment-ledger/config/repos.json) w
   ]
 }
 ```
+
+Current implementation note:
+
+- `local_path`, `branch`, `todo_file`, and `enabled` drive behavior today
+- `provider` and `url` are retained in the config shape but are not used by the local-only v0.1 scanner
 
 ## Scenario 1: Alice Keeps a Promise
 
