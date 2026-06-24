@@ -237,7 +237,11 @@ func runStatus(root string, store *ledger.Store, args []string) error {
 		if err != nil {
 			return err
 		}
-		printExchangeStatus(policy, imports)
+		artifacts, err := store.LoadArtifacts()
+		if err != nil {
+			return err
+		}
+		printExchangeStatus(policy, imports, artifacts)
 		return nil
 	}
 	workItems, err := store.LoadLatestWorkItems()
@@ -506,14 +510,18 @@ func runReport(root string, store *ledger.Store, args []string) error {
 		if err != nil {
 			return err
 		}
+		artifacts, err := store.LoadArtifacts()
+		if err != nil {
+			return err
+		}
 		policy, err := trust.Load(root)
 		if err != nil {
 			return err
 		}
 		if *jsonOut {
-			return printJSON(summarizeImports(policy, imports))
+			return printJSON(summarizeImports(policy, imports, artifacts))
 		}
-		printImportReport(policy, imports)
+		printImportReport(policy, imports, artifacts)
 		return nil
 	}
 
@@ -607,6 +615,7 @@ func runReport(root string, store *ledger.Store, args []string) error {
 
 func runInspect(root string, store *ledger.Store, registry protocol.Registry, args []string) error {
 	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -640,12 +649,16 @@ func runInspect(root string, store *ledger.Store, registry protocol.Registry, ar
 	if err != nil {
 		return err
 	}
+	if *jsonOut {
+		return printJSON(view)
+	}
 	printInspectView(view)
 	return nil
 }
 
 func runVerify(root string, store *ledger.Store, registry protocol.Registry, args []string) error {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -723,7 +736,11 @@ func runVerify(root string, store *ledger.Store, registry protocol.Registry, arg
 		return err
 	}
 
-	printVerifyResult(root, registry, artifact, decoded, ident, latestImportForArtifact(imports, artifact.ArtifactCID), policy)
+	result := buildVerifyResult(root, registry, artifact, decoded, ident, latestImportForArtifact(imports, artifact.ArtifactCID), policy)
+	if *jsonOut {
+		return printJSON(result)
+	}
+	printVerifyResult(result)
 	return nil
 }
 
@@ -1439,24 +1456,57 @@ func sanitizeFilename(value string) string {
 }
 
 type inspectView struct {
-	Reference          string
-	Kind               string
-	RelatedID          string
-	RelatedCID         string
-	ArtifactCID        string
-	ProtocolName       string
-	ProtocolPCID       string
-	ProtocolPath       string
-	Signer             string
-	SignerKeyID        string
-	PayloadCID         string
-	ProofCID           string
-	ObservedAt         string
-	RecordPath         string
-	Details            []string
-	ConformanceEntries []changelog.Entry
-	LatestImport       *model.ImportRecord
-	RelatedImports     []model.ImportRecord
+	Reference          string               `json:"reference"`
+	Kind               string               `json:"kind"`
+	RelatedID          string               `json:"related_id,omitempty"`
+	RelatedCID         string               `json:"related_cid,omitempty"`
+	ArtifactCID        string               `json:"artifact_cid,omitempty"`
+	ProtocolName       string               `json:"protocol_name,omitempty"`
+	ProtocolPCID       string               `json:"protocol_pcid,omitempty"`
+	ProtocolPath       string               `json:"protocol_path,omitempty"`
+	Signer             string               `json:"signer,omitempty"`
+	SignerKeyID        string               `json:"signer_key_id,omitempty"`
+	PayloadCID         string               `json:"payload_cid,omitempty"`
+	ProofCID           string               `json:"proof_cid,omitempty"`
+	ObservedAt         string               `json:"observed_at,omitempty"`
+	RecordPath         string               `json:"record_path,omitempty"`
+	Details            []string             `json:"details,omitempty"`
+	ConformanceEntries []changelog.Entry    `json:"conformance_entries,omitempty"`
+	LatestImport       *model.ImportRecord  `json:"latest_import,omitempty"`
+	RelatedImports     []model.ImportRecord `json:"related_imports,omitempty"`
+}
+
+type verifyResult struct {
+	Reference           string              `json:"reference"`
+	Kind                string              `json:"kind"`
+	ArtifactCID         string              `json:"artifact_cid"`
+	EnvelopeCIDVerified bool                `json:"envelope_cid_verified"`
+	PayloadCIDVerified  bool                `json:"payload_cid_verified"`
+	ProofCIDVerified    bool                `json:"proof_cid_verified"`
+	SignatureVerified   bool                `json:"signature_verified"`
+	SignerIdentityOK    bool                `json:"signer_identity_verified"`
+	Signer              string              `json:"signer"`
+	SignerKeyID         string              `json:"signer_key_id"`
+	LocalIdentityFile   string              `json:"local_identity_file,omitempty"`
+	IdentitySource      string              `json:"identity_source,omitempty"`
+	ProtocolPCID        string              `json:"protocol_pcid"`
+	LocalProtocolMatch  bool                `json:"local_protocol_match"`
+	ProtocolName        string              `json:"protocol_name,omitempty"`
+	ProtocolPath        string              `json:"protocol_path,omitempty"`
+	ProtocolSource      string              `json:"protocol_source,omitempty"`
+	PayloadCID          string              `json:"payload_cid"`
+	ProofCID            string              `json:"proof_cid"`
+	ObservedAt          string              `json:"observed_at,omitempty"`
+	LatestImport        *model.ImportRecord `json:"latest_import,omitempty"`
+	TrustPolicyFile     string              `json:"trust_policy_file"`
+	TrustPolicyLoaded   bool                `json:"trust_policy_loaded"`
+	SignerTrusted       bool                `json:"signer_trusted"`
+	SignerReason        string              `json:"signer_reason"`
+	ProtocolTrusted     bool                `json:"protocol_trusted"`
+	ProtocolReason      string              `json:"protocol_reason"`
+	ImportSourceTrusted *bool               `json:"import_source_trusted,omitempty"`
+	ImportReason        string              `json:"import_reason"`
+	OverallTrusted      bool                `json:"overall_trusted"`
 }
 
 func inspectReference(root string, registry protocol.Registry, ref string, artifacts []model.ArtifactRecord, commitments map[string]model.Commitment, evidenceItems []model.Evidence, assessments []model.Assessment, imports []model.ImportRecord) (inspectView, error) {
@@ -2036,53 +2086,95 @@ func emptyFallback(value string, fallback string) string {
 	return value
 }
 
-func printVerifyResult(root string, registry protocol.Registry, artifact model.ArtifactRecord, decoded grid.DecodedArtifact, ident identity.Identity, latestImport *model.ImportRecord, policy trust.Policy) {
+func buildVerifyResult(root string, registry protocol.Registry, artifact model.ArtifactRecord, decoded grid.DecodedArtifact, ident identity.Identity, latestImport *model.ImportRecord, policy trust.Policy) verifyResult {
 	location := resolveProtocolLocation(root, registry, decoded.ProtocolPCID)
 	identityLocation := resolveIdentityLocation(root, decoded.Proof.Signer)
 	evaluation := trust.Evaluate(policy, decoded.Proof.Signer, identityLocation.Matched && !identityLocation.Imported, decoded.ProtocolPCID, location.Matched && !location.Imported, latestImport)
-	fmt.Printf("Reference: %s\n", emptyFallback(artifact.RelatedID, artifact.ArtifactCID))
-	fmt.Printf("Kind: %s\n", emptyFallback(artifact.Kind, "(unknown)"))
-	fmt.Printf("Artifact CID: %s\n", artifact.ArtifactCID)
-	fmt.Printf("Envelope CID Verified: yes\n")
-	fmt.Printf("Payload CID Verified: yes\n")
-	fmt.Printf("Proof CID Verified: yes\n")
-	fmt.Printf("Signature Verified: yes\n")
-	fmt.Printf("Signer Identity Verified: yes\n")
-	fmt.Printf("Signer: %s\n", decoded.Proof.Signer)
-	fmt.Printf("Signer Key ID: %s\n", decoded.Proof.KeyID)
-	fmt.Printf("Local Identity File: %s\n", identityLocation.Path)
-	if identityLocation.Matched {
-		fmt.Printf("Identity Source: %s\n", identityLocation.Source())
+	out := verifyResult{
+		Reference:           emptyFallback(artifact.RelatedID, artifact.ArtifactCID),
+		Kind:                emptyFallback(artifact.Kind, "(unknown)"),
+		ArtifactCID:         artifact.ArtifactCID,
+		EnvelopeCIDVerified: true,
+		PayloadCIDVerified:  true,
+		ProofCIDVerified:    true,
+		SignatureVerified:   true,
+		SignerIdentityOK:    true,
+		Signer:              decoded.Proof.Signer,
+		SignerKeyID:         decoded.Proof.KeyID,
+		LocalIdentityFile:   identityLocation.Path,
+		ProtocolPCID:        decoded.ProtocolPCID,
+		LocalProtocolMatch:  location.Matched,
+		PayloadCID:          decoded.PayloadCID,
+		ProofCID:            decoded.ProofCID,
+		ObservedAt:          artifact.ObservedAt,
+		LatestImport:        latestImport,
+		TrustPolicyFile:     policy.Path,
+		TrustPolicyLoaded:   policy.Found,
+		SignerTrusted:       evaluation.SignerTrusted,
+		SignerReason:        evaluation.SignerReason,
+		ProtocolTrusted:     evaluation.ProtocolTrusted,
+		ProtocolReason:      evaluation.ProtocolReason,
+		ImportReason:        evaluation.ImportReason,
+		OverallTrusted:      evaluation.OverallTrusted,
 	}
-	fmt.Printf("Protocol pCID: %s\n", decoded.ProtocolPCID)
+	if identityLocation.Matched {
+		out.IdentitySource = identityLocation.Source()
+	}
 	if location.Matched {
+		out.ProtocolName = location.Name
+		out.ProtocolPath = location.Path
+		out.ProtocolSource = protocolSource(location)
+	}
+	if evaluation.ImportApplies {
+		out.ImportSourceTrusted = boolPtr(evaluation.ImportTrusted)
+	}
+	_ = ident
+	return out
+}
+
+func printVerifyResult(result verifyResult) {
+	fmt.Printf("Reference: %s\n", result.Reference)
+	fmt.Printf("Kind: %s\n", result.Kind)
+	fmt.Printf("Artifact CID: %s\n", result.ArtifactCID)
+	fmt.Printf("Envelope CID Verified: %s\n", yesNo(result.EnvelopeCIDVerified))
+	fmt.Printf("Payload CID Verified: %s\n", yesNo(result.PayloadCIDVerified))
+	fmt.Printf("Proof CID Verified: %s\n", yesNo(result.ProofCIDVerified))
+	fmt.Printf("Signature Verified: %s\n", yesNo(result.SignatureVerified))
+	fmt.Printf("Signer Identity Verified: %s\n", yesNo(result.SignerIdentityOK))
+	fmt.Printf("Signer: %s\n", result.Signer)
+	fmt.Printf("Signer Key ID: %s\n", result.SignerKeyID)
+	fmt.Printf("Local Identity File: %s\n", result.LocalIdentityFile)
+	if result.IdentitySource != "" {
+		fmt.Printf("Identity Source: %s\n", result.IdentitySource)
+	}
+	fmt.Printf("Protocol pCID: %s\n", result.ProtocolPCID)
+	if result.LocalProtocolMatch {
 		fmt.Printf("Local Protocol Match: yes\n")
-		fmt.Printf("Protocol: %s\n", location.Name)
-		fmt.Printf("Protocol Doc: %s\n", location.Path)
-		fmt.Printf("Protocol Source: %s\n", protocolSource(location))
+		fmt.Printf("Protocol: %s\n", result.ProtocolName)
+		fmt.Printf("Protocol Doc: %s\n", result.ProtocolPath)
+		fmt.Printf("Protocol Source: %s\n", result.ProtocolSource)
 	} else {
 		fmt.Printf("Local Protocol Match: no\n")
 	}
-	fmt.Printf("Payload CID: %s\n", decoded.PayloadCID)
-	fmt.Printf("Proof CID: %s\n", decoded.ProofCID)
-	fmt.Printf("Observed At: %s\n", emptyFallback(artifact.ObservedAt, "(none)"))
-	if latestImport != nil {
-		fmt.Printf("Latest Import Mode: %s\n", latestImport.Mode)
-		fmt.Printf("Latest Import Source: %s\n", latestImport.SourcePath)
-		fmt.Printf("Latest Import At: %s\n", latestImport.ImportedAt)
-		fmt.Printf("Import Support Installed: %s\n", yesNo(latestImport.SupportInstalled))
+	fmt.Printf("Payload CID: %s\n", result.PayloadCID)
+	fmt.Printf("Proof CID: %s\n", result.ProofCID)
+	fmt.Printf("Observed At: %s\n", emptyFallback(result.ObservedAt, "(none)"))
+	if result.LatestImport != nil {
+		fmt.Printf("Latest Import Mode: %s\n", result.LatestImport.Mode)
+		fmt.Printf("Latest Import Source: %s\n", result.LatestImport.SourcePath)
+		fmt.Printf("Latest Import At: %s\n", result.LatestImport.ImportedAt)
+		fmt.Printf("Import Support Installed: %s\n", yesNo(result.LatestImport.SupportInstalled))
 	}
-	fmt.Printf("Trust Policy File: %s\n", policy.Path)
-	fmt.Printf("Trust Policy Loaded: %s\n", yesNo(policy.Found))
-	fmt.Printf("Signer Trusted: %s (%s)\n", yesNo(evaluation.SignerTrusted), evaluation.SignerReason)
-	fmt.Printf("Protocol Trusted: %s (%s)\n", yesNo(evaluation.ProtocolTrusted), evaluation.ProtocolReason)
-	if evaluation.ImportApplies {
-		fmt.Printf("Import Source Trusted: %s (%s)\n", yesNo(evaluation.ImportTrusted), evaluation.ImportReason)
+	fmt.Printf("Trust Policy File: %s\n", result.TrustPolicyFile)
+	fmt.Printf("Trust Policy Loaded: %s\n", yesNo(result.TrustPolicyLoaded))
+	fmt.Printf("Signer Trusted: %s (%s)\n", yesNo(result.SignerTrusted), result.SignerReason)
+	fmt.Printf("Protocol Trusted: %s (%s)\n", yesNo(result.ProtocolTrusted), result.ProtocolReason)
+	if result.ImportSourceTrusted != nil {
+		fmt.Printf("Import Source Trusted: %s (%s)\n", yesNo(*result.ImportSourceTrusted), result.ImportReason)
 	} else {
-		fmt.Printf("Import Source Trusted: n/a (%s)\n", evaluation.ImportReason)
+		fmt.Printf("Import Source Trusted: n/a (%s)\n", result.ImportReason)
 	}
-	fmt.Printf("Overall Trust: %s\n", yesNo(evaluation.OverallTrusted))
-	_ = ident
+	fmt.Printf("Overall Trust: %s\n", yesNo(result.OverallTrusted))
 }
 
 func identityPathForName(name string) string {
@@ -2113,21 +2205,23 @@ func yesNo(value bool) string {
 	return "no"
 }
 
-func printExchangeStatus(policy trust.Policy, imports []model.ImportRecord) {
-	summary := summarizeImports(policy, imports)
+func printExchangeStatus(policy trust.Policy, imports []model.ImportRecord, artifacts []model.ArtifactRecord) {
+	summary := summarizeImports(policy, imports, artifacts)
 	fmt.Printf("Total imports: %d\n", summary.Total)
 	fmt.Printf("Unique imported artifacts: %d\n", summary.UniqueArtifacts)
 	fmt.Printf("Unique import sources: %d\n", summary.UniqueSources)
 	fmt.Printf("Support installed: %d\n", summary.SupportInstalled)
 	fmt.Printf("Trusted imports: %d\n", summary.Trusted)
 	fmt.Printf("Untrusted imports: %d\n", summary.Untrusted)
+	fmt.Printf("Receipt artifacts: %d\n", summary.ReceiptArtifacts)
+	fmt.Printf("Imported artifacts with receipts: %d\n", summary.ImportedArtifactsWithReceipts)
 	for _, mode := range summary.Modes {
 		fmt.Printf("Mode %s: %d\n", mode, summary.ByMode[mode])
 	}
 }
 
-func printImportReport(policy trust.Policy, imports []model.ImportRecord) {
-	summary := summarizeImports(policy, imports)
+func printImportReport(policy trust.Policy, imports []model.ImportRecord, artifacts []model.ArtifactRecord) {
+	summary := summarizeImports(policy, imports, artifacts)
 	fmt.Printf("Total imports: %d\n", summary.Total)
 	for _, source := range summary.Sources {
 		item := summary.BySource[source]
@@ -2135,31 +2229,39 @@ func printImportReport(policy trust.Policy, imports []model.ImportRecord) {
 		fmt.Printf("Imports: %d\n", item.Count)
 		fmt.Printf("Trusted: %s\n", yesNo(item.Trusted))
 		fmt.Printf("Modes: %s\n", strings.Join(item.Modes, ", "))
+		fmt.Printf("Receipt Artifacts: %d\n", item.ReceiptArtifacts)
+		if len(item.ReceiptSigners) > 0 {
+			fmt.Printf("Receipt Signers: %s\n", strings.Join(item.ReceiptSigners, ", "))
+		}
 		fmt.Printf("Last Imported At: %s\n", item.LastImportedAt)
 	}
 }
 
 type importSummary struct {
-	Total            int                            `json:"total"`
-	UniqueArtifacts  int                            `json:"unique_artifacts"`
-	UniqueSources    int                            `json:"unique_sources"`
-	SupportInstalled int                            `json:"support_installed"`
-	Trusted          int                            `json:"trusted"`
-	Untrusted        int                            `json:"untrusted"`
-	ByMode           map[string]int                 `json:"by_mode"`
-	Modes            []string                       `json:"modes"`
-	BySource         map[string]importSourceSummary `json:"by_source"`
-	Sources          []string                       `json:"sources"`
+	Total                         int                            `json:"total"`
+	UniqueArtifacts               int                            `json:"unique_artifacts"`
+	UniqueSources                 int                            `json:"unique_sources"`
+	SupportInstalled              int                            `json:"support_installed"`
+	Trusted                       int                            `json:"trusted"`
+	Untrusted                     int                            `json:"untrusted"`
+	ReceiptArtifacts              int                            `json:"receipt_artifacts"`
+	ImportedArtifactsWithReceipts int                            `json:"imported_artifacts_with_receipts"`
+	ByMode                        map[string]int                 `json:"by_mode"`
+	Modes                         []string                       `json:"modes"`
+	BySource                      map[string]importSourceSummary `json:"by_source"`
+	Sources                       []string                       `json:"sources"`
 }
 
 type importSourceSummary struct {
-	Count          int      `json:"count"`
-	Trusted        bool     `json:"trusted"`
-	Modes          []string `json:"modes"`
-	LastImportedAt string   `json:"last_imported_at"`
+	Count            int      `json:"count"`
+	Trusted          bool     `json:"trusted"`
+	Modes            []string `json:"modes"`
+	ReceiptArtifacts int      `json:"receipt_artifacts"`
+	ReceiptSigners   []string `json:"receipt_signers,omitempty"`
+	LastImportedAt   string   `json:"last_imported_at"`
 }
 
-func summarizeImports(policy trust.Policy, imports []model.ImportRecord) importSummary {
+func summarizeImports(policy trust.Policy, imports []model.ImportRecord, artifacts []model.ArtifactRecord) importSummary {
 	out := importSummary{
 		ByMode:   map[string]int{},
 		BySource: map[string]importSourceSummary{},
@@ -2167,6 +2269,7 @@ func summarizeImports(policy trust.Policy, imports []model.ImportRecord) importS
 	artifactSet := map[string]struct{}{}
 	sourceSet := map[string]struct{}{}
 	modeSet := map[string]struct{}{}
+	receiptArtifacts := receiptArtifactsByImportedArtifact(artifacts)
 	for _, record := range imports {
 		out.Total++
 		if record.SupportInstalled {
@@ -2193,11 +2296,34 @@ func summarizeImports(policy trust.Policy, imports []model.ImportRecord) importS
 			sourceSummary.Modes = append(sourceSummary.Modes, record.Mode)
 			sort.Strings(sourceSummary.Modes)
 		}
+		if receipts := receiptArtifacts[record.ArtifactCID]; len(receipts) > 0 {
+			sourceSummary.ReceiptArtifacts += len(receipts)
+			signerSet := map[string]struct{}{}
+			for _, receipt := range receipts {
+				signerSet[receipt.Signer] = struct{}{}
+			}
+			sourceSummary.ReceiptSigners = sortedKeys(signerSet)
+		}
 		if record.ImportedAt > sourceSummary.LastImportedAt {
 			sourceSummary.LastImportedAt = record.ImportedAt
 		}
 		out.BySource[record.SourcePath] = sourceSummary
 	}
+	receiptCounted := map[string]struct{}{}
+	importedWithReceipts := map[string]struct{}{}
+	for importedCID, receipts := range receiptArtifacts {
+		if len(receipts) > 0 {
+			importedWithReceipts[importedCID] = struct{}{}
+		}
+		for _, receipt := range receipts {
+			if _, ok := receiptCounted[receipt.ArtifactCID]; ok {
+				continue
+			}
+			receiptCounted[receipt.ArtifactCID] = struct{}{}
+			out.ReceiptArtifacts++
+		}
+	}
+	out.ImportedArtifactsWithReceipts = len(importedWithReceipts)
 	out.UniqueArtifacts = len(artifactSet)
 	out.UniqueSources = len(sourceSet)
 	for mode := range modeSet {
@@ -2209,6 +2335,30 @@ func summarizeImports(policy trust.Policy, imports []model.ImportRecord) importS
 	sort.Strings(out.Modes)
 	sort.Strings(out.Sources)
 	return out
+}
+
+func receiptArtifactsByImportedArtifact(artifacts []model.ArtifactRecord) map[string][]model.ArtifactRecord {
+	out := map[string][]model.ArtifactRecord{}
+	for _, artifact := range artifacts {
+		if artifact.Kind != "exchange_receipt" || artifact.RelatedCID == "" {
+			continue
+		}
+		out[artifact.RelatedCID] = append(out[artifact.RelatedCID], artifact)
+	}
+	return out
+}
+
+func sortedKeys(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func stringSliceContains(items []string, want string) bool {

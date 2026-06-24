@@ -52,8 +52,9 @@ commitment-ledger status
 commitment-ledger status --exchange
 commitment-ledger report --promiser JJ
 commitment-ledger report --imports
-commitment-ledger inspect COMMITMENT-...
-commitment-ledger verify COMMITMENT-...
+commitment-ledger report --imports --json
+commitment-ledger inspect --json COMMITMENT-...
+commitment-ledger verify --json COMMITMENT-...
 commitment-ledger export --out /tmp/bundle.json COMMITMENT-...
 commitment-ledger import --in /tmp/bundle.json
 commitment-ledger send --outbox /tmp/peer-outbox COMMITMENT-...
@@ -80,9 +81,9 @@ Common targets:
 - `make scan CONFIG=config/repos.json`: scan a configured repo set
 - `make status STATUS_ARGS='--exchange'`: run the default repo summary or the exchange/import summary
 - `make report REPORT_ARGS='--promiser Alice'`: run a filtered report
-- `make report REPORT_ARGS='--imports'`: summarize imported artifacts by source path and trust result
-- `make inspect INSPECT_ARGS='COMMITMENT-...'`: inspect a commitment ID, evidence ID, assessment ID, or artifact CID
-- `make verify VERIFY_ARGS='COMMITMENT-...'`: verify a commitment ID, evidence ID, assessment ID, or artifact CID against local CAS bytes and signer material
+- `make report REPORT_ARGS='--imports --json'`: summarize imported artifacts by source path, trust result, and receipt coverage, with optional JSON output
+- `make inspect INSPECT_ARGS='--json COMMITMENT-...'`: inspect a commitment ID, evidence ID, assessment ID, receipt ID, or artifact CID in text or JSON form
+- `make verify VERIFY_ARGS='--json COMMITMENT-...'`: verify a commitment ID, evidence ID, assessment ID, receipt ID, or artifact CID against local CAS bytes and signer material in text or JSON form
 - `make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'`: export an artifact bundle with related projection rows and support material
 - `make import IMPORT_ARGS='--in /tmp/bundle.json'`: import an artifact bundle and optionally install bundled support material
 - `make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'`: write a bundle into a peer-facing outbox directory
@@ -160,13 +161,14 @@ Observed work targets are always branch-qualified, for example
 - Repo status summaries surface kept and non-kept terminal outcomes separately.
 - `inspect` resolves commitment IDs, evidence IDs, assessment IDs, receipt IDs, and artifact CIDs back to their local artifact metadata, frozen protocol docs, matching `CHANGELOG.md` conformance entries, and latest import provenance when present.
 - `verify` checks local CAS bytes, envelope/payload/proof CIDs, the signature, matching local signer identity material, and optional local trust policy over signer, protocol, and import source.
+- `inspect --json`, `verify --json`, `report --json`, and `doctor --json` provide machine-readable output for automation.
 - `export` writes a portable bundle containing the artifact index row, envelope bytes, related projection rows, and available signer/protocol support material.
 - `import` loads that bundle back into local CAS and projections, can install bundled signer/protocol support material for later `inspect` and `verify` use, and records import provenance in `data/imports.jsonl`.
 - `import` rejects conflicting commitment, evidence, assessment, signer-support, and protocol-support state instead of silently diverging local history.
 - bundle files and `config/trust-policy.json` are parsed with strict schema checks; unknown fields and incomplete required sections now fail early.
 - `send` and `receive` add a local filesystem inbox/outbox exchange path on top of the bundle format; they are still not network transport.
+- `status --exchange` and `report --imports` now surface receive-receipt coverage as well as import counts and trust state.
 - `doctor` checks local artifact index entries against CAS bytes and validates imported support files; `doctor --json` emits a stable machine-readable summary.
-- `report --json` and `doctor --json` provide machine-readable output for automation.
 - `repair` rebuilds Markdown records from JSONL state, restores built-in frozen protocol docs into local CAS, and can restore missing imported artifact envelopes from recorded bundle source paths.
 - `identity list`, `identity show`, and `identity rotate` provide a basic local signer lifecycle workflow with archive copies of rotated keys.
 

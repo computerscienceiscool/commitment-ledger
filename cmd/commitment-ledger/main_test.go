@@ -1301,6 +1301,8 @@ func TestRunStatusExchangeAndReportImports(t *testing.T) {
 		"Total imports: 1",
 		"Unique imported artifacts: 1",
 		"Trusted imports: 1",
+		"Receipt artifacts: 1",
+		"Imported artifacts with receipts: 1",
 		"Mode receive: 1",
 	} {
 		if !strings.Contains(statusOut, fragment) {
@@ -1316,6 +1318,8 @@ func TestRunStatusExchangeAndReportImports(t *testing.T) {
 		"Imports: 1",
 		"Trusted: yes",
 		"Modes: receive",
+		"Receipt Artifacts: 1",
+		"Receipt Signers: commitment-ledger",
 	} {
 		if !strings.Contains(reportOut, fragment) {
 			t.Fatalf("report --imports output missing %q:\n%s", fragment, reportOut)
@@ -1350,8 +1354,77 @@ func TestRunDoctorAndReportJSON(t *testing.T) {
 		return runReport(root, store, []string{"--imports", "--json"})
 	})
 	if !strings.Contains(reportOut, strconv.Quote(bundlePath)+": {") ||
-		!strings.Contains(reportOut, "\"trusted\": false") {
+		!strings.Contains(reportOut, "\"trusted\": false") ||
+		!strings.Contains(reportOut, "\"receipt_artifacts\": 1") {
 		t.Fatalf("unexpected report json output:\n%s", reportOut)
+	}
+}
+
+func TestRunInspectAndVerifyJSON(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(root, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+
+	now := time.Date(2026, 6, 24, 23, 15, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(root, store, registry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan: %v", err)
+	}
+	if err := runCommit(root, store, registry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+	commitment := latestCommitment(t, store)
+
+	inspectOut := captureStdout(t, func() error {
+		return runInspect(root, store, registry, []string{"--json", commitment.CommitmentID})
+	})
+	for _, fragment := range []string{
+		"\"reference\": " + strconv.Quote(commitment.CommitmentID),
+		"\"kind\": \"commitment_promise\"",
+		"\"protocol_name\": " + strconv.Quote(protocol.CommitmentPromise),
+	} {
+		if !strings.Contains(inspectOut, fragment) {
+			t.Fatalf("inspect json output missing %q:\n%s", fragment, inspectOut)
+		}
+	}
+
+	verifyOut := captureStdout(t, func() error {
+		return runVerify(root, store, registry, []string{"--json", commitment.CommitmentID})
+	})
+	for _, fragment := range []string{
+		"\"artifact_cid\": " + strconv.Quote(commitment.ArtifactCID),
+		"\"signature_verified\": true",
+		"\"overall_trusted\": true",
+		"\"protocol_name\": " + strconv.Quote(protocol.CommitmentPromise),
+	} {
+		if !strings.Contains(verifyOut, fragment) {
+			t.Fatalf("verify json output missing %q:\n%s", fragment, verifyOut)
+		}
 	}
 }
 

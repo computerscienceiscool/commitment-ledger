@@ -22,9 +22,9 @@ make scan CONFIG=config/repos.json
 make status
 make status STATUS_ARGS='--exchange'
 make report REPORT_ARGS='--promiser Alice'
-make report REPORT_ARGS='--imports'
-make inspect INSPECT_ARGS='COMMITMENT-...'
-make verify VERIFY_ARGS='COMMITMENT-...'
+make report REPORT_ARGS='--imports --json'
+make inspect INSPECT_ARGS='--json COMMITMENT-...'
+make verify VERIFY_ARGS='--json COMMITMENT-...'
 make conformance VERSION=v0.1.0 SIGNER=commitment-ledger
 make conformance-update VERSION=v0.1.0 SIGNER=commitment-ledger
 make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'
@@ -134,6 +134,7 @@ Use `status --exchange` for import and exchange summary:
 - support installation count
 - trusted vs untrusted imports under the current trust policy
 - per-mode counts such as `import` vs `receive`
+- receipt-artifact counts and how many imported artifacts have been acknowledged
 
 ### `report`
 
@@ -151,6 +152,9 @@ target.
 Use `report --imports` when you want imported-artifact summaries grouped by
 source path and annotated with the current trust-policy result.
 
+That summary now also includes per-source receipt counts and receipt signers for
+local `receive` acknowledgements.
+
 Use `--json` when you need machine-readable summaries for automation.
 
 ### `inspect`
@@ -161,6 +165,7 @@ go run ./cmd/commitment-ledger inspect EVIDENCE-...
 go run ./cmd/commitment-ledger inspect ASSESSMENT-...
 go run ./cmd/commitment-ledger inspect RECEIPT-...
 go run ./cmd/commitment-ledger inspect bafy...
+go run ./cmd/commitment-ledger inspect --json COMMITMENT-...
 ```
 
 `inspect` resolves:
@@ -182,6 +187,9 @@ It prints:
 - latest import provenance when the artifact entered this repo through `import` or `receive`
 - current projected status or evidence details
 
+Use `--json` when the same information needs to feed automation instead of a
+human operator.
+
 ### `verify`
 
 ```bash
@@ -190,6 +198,7 @@ go run ./cmd/commitment-ledger verify EVIDENCE-...
 go run ./cmd/commitment-ledger verify ASSESSMENT-...
 go run ./cmd/commitment-ledger verify RECEIPT-...
 go run ./cmd/commitment-ledger verify bafy...
+go run ./cmd/commitment-ledger verify --json COMMITMENT-...
 ```
 
 `verify` resolves the same reference types as `inspect`, then checks:
@@ -204,6 +213,9 @@ It also tells you whether the artifact's `protocol_pcid` matches a local frozen
 protocol doc, whether the identity/protocol support came from built-in or
 imported state, the latest recorded import provenance when applicable, and the
 current local trust-policy judgment for signer, protocol, and import source.
+
+Use `--json` when you need those verification results in a stable
+machine-readable form.
 
 ### `config/trust-policy.json`
 
