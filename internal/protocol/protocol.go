@@ -74,6 +74,15 @@ func (r Registry) MustPCID(name string) string {
 	return spec.PCID
 }
 
+func (r Registry) FindByPCID(id string) (Spec, bool) {
+	for _, spec := range r.ByName {
+		if spec.PCID == id {
+			return spec, true
+		}
+	}
+	return Spec{}, false
+}
+
 func MarshalPayload(v any) ([]byte, error) {
 	return json.Marshal(v)
 }

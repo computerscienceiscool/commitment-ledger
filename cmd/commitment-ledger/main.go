@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -58,6 +59,8 @@ func main() {
 		err = runExpire(store, now)
 	case "report":
 		err = runReport(store, os.Args[2:])
+	case "inspect":
+		err = runInspect(root, store, registry, os.Args[2:])
 	default:
 		usage()
 		err = fmt.Errorf("unknown command %q", os.Args[1])
@@ -69,7 +72,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report> [flags]")
+	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report|inspect> [flags]")
 }
 
 func runScan(root string, store *ledger.Store, registry protocol.Registry, now time.Time, args []string) error {
@@ -527,6 +530,231 @@ func runReport(store *ledger.Store, args []string) error {
 		fmt.Printf("Extended: %d\n\n", item.Extended)
 	}
 	return nil
+}
+
+func runInspect(root string, store *ledger.Store, registry protocol.Registry, args []string) error {
+	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("inspect requires exactly one reference")
+	}
+	ref := fs.Arg(0)
+
+	artifacts, err := store.LoadArtifacts()
+	if err != nil {
+		return err
+	}
+	commitments, err := store.LoadLatestCommitments()
+	if err != nil {
+		return err
+	}
+	evidenceItems, err := store.LoadEvidence()
+	if err != nil {
+		return err
+	}
+	assessments, err := store.LoadAssessments()
+	if err != nil {
+		return err
+	}
+
+	view, err := inspectReference(root, registry, ref, artifacts, commitments, evidenceItems, assessments)
+	if err != nil {
+		return err
+	}
+	printInspectView(view)
+	return nil
+}
+
+type inspectView struct {
+	Reference    string
+	Kind         string
+	RelatedID    string
+	RelatedCID   string
+	ArtifactCID  string
+	ProtocolName string
+	ProtocolPCID string
+	ProtocolPath string
+	Signer       string
+	SignerKeyID  string
+	PayloadCID   string
+	ProofCID     string
+	ObservedAt   string
+	RecordPath   string
+	Details      []string
+}
+
+func inspectReference(root string, registry protocol.Registry, ref string, artifacts []model.ArtifactRecord, commitments map[string]model.Commitment, evidenceItems []model.Evidence, assessments []model.Assessment) (inspectView, error) {
+	artifactByCID := make(map[string]model.ArtifactRecord, len(artifacts))
+	for _, item := range artifacts {
+		artifactByCID[item.ArtifactCID] = item
+	}
+
+	if item, ok := commitments[ref]; ok {
+		return buildCommitmentInspectView(root, registry, ref, item, artifactByCID[item.ArtifactCID]), nil
+	}
+	for _, item := range evidenceItems {
+		if item.EvidenceID == ref {
+			return buildEvidenceInspectView(root, registry, ref, item, artifactByCID[item.ArtifactCID], commitments), nil
+		}
+	}
+	for _, item := range assessments {
+		if item.AssessmentID == ref {
+			return buildAssessmentInspectView(root, registry, ref, item, artifactByCID[item.ArtifactCID], commitments), nil
+		}
+	}
+	if artifact, ok := artifactByCID[ref]; ok {
+		switch artifact.Kind {
+		case "commitment_promise":
+			if item, ok := commitments[artifact.RelatedID]; ok {
+				return buildCommitmentInspectView(root, registry, ref, item, artifact), nil
+			}
+		case "commitment_evidence":
+			for _, item := range evidenceItems {
+				if item.EvidenceID == artifact.RelatedID {
+					return buildEvidenceInspectView(root, registry, ref, item, artifact, commitments), nil
+				}
+			}
+		case "commitment_assessment":
+			for _, item := range assessments {
+				if item.AssessmentID == artifact.RelatedID {
+					return buildAssessmentInspectView(root, registry, ref, item, artifact, commitments), nil
+				}
+			}
+		}
+		return buildArtifactInspectView(registry, ref, artifact), nil
+	}
+
+	return inspectView{}, fmt.Errorf("unknown inspect reference %q", ref)
+}
+
+func buildCommitmentInspectView(root string, registry protocol.Registry, ref string, item model.Commitment, artifact model.ArtifactRecord) inspectView {
+	view := buildArtifactInspectView(registry, ref, artifact)
+	view.Kind = "commitment_promise"
+	view.RelatedID = item.CommitmentID
+	view.RecordPath = filepath.Join(root, "records", "commitments", item.CommitmentID+".md")
+	view.Details = []string{
+		"Current Status: " + item.Status,
+		"Promiser: " + item.Promiser,
+		"Repo: " + item.Repo,
+		"Branch: " + item.Branch,
+		"Due Date: " + item.DueDate,
+		"Promise: " + item.PromiseText,
+		"Targets: " + strings.Join(item.Targets, ", "),
+	}
+	if view.ProtocolPCID == "" {
+		view.ProtocolPCID = item.ProtocolPCID
+	}
+	return enrichProtocol(registry, view)
+}
+
+func buildEvidenceInspectView(root string, registry protocol.Registry, ref string, item model.Evidence, artifact model.ArtifactRecord, commitments map[string]model.Commitment) inspectView {
+	view := buildArtifactInspectView(registry, ref, artifact)
+	view.Kind = "commitment_evidence"
+	view.RelatedID = item.EvidenceID
+	view.RecordPath = "none (evidence stays in data/evidence.jsonl and commitment markdown)"
+	view.Details = []string{
+		"Evidence Type: " + item.EvidenceType,
+		"Commitment ID: " + item.CommitmentID,
+		"Repo: " + item.Repo,
+		"Branch: " + item.Branch,
+		"Observed Commit: " + item.Commit,
+		"Target: " + emptyFallback(item.Target, "(none)"),
+		"Observed At: " + item.ObservedAt,
+		"Notes: " + emptyFallback(item.Notes, "(none)"),
+	}
+	if commitment, ok := commitments[item.CommitmentID]; ok {
+		view.Details = append([]string{"Current Commitment Status: " + commitment.Status}, view.Details...)
+	}
+	if view.ProtocolPCID == "" {
+		view.ProtocolPCID = item.ProtocolPCID
+	}
+	return enrichProtocol(registry, view)
+}
+
+func buildAssessmentInspectView(root string, registry protocol.Registry, ref string, item model.Assessment, artifact model.ArtifactRecord, commitments map[string]model.Commitment) inspectView {
+	view := buildArtifactInspectView(registry, ref, artifact)
+	view.Kind = "commitment_assessment"
+	view.RelatedID = item.AssessmentID
+	view.RecordPath = filepath.Join(root, "records", "assessments", item.AssessmentID+".md")
+	view.Details = []string{
+		"Assessment Status: " + item.Status,
+		"Commitment ID: " + item.CommitmentID,
+		"Assessor: " + item.Assessor,
+		"Assessed At: " + item.AssessedAt,
+		"Basis Count: " + fmt.Sprintf("%d", len(item.Basis)),
+		"Basis: " + emptyFallback(strings.Join(item.Basis, ", "), "(none)"),
+		"Notes: " + emptyFallback(item.Notes, "(none)"),
+	}
+	if commitment, ok := commitments[item.CommitmentID]; ok {
+		view.Details = append([]string{"Current Commitment Status: " + commitment.Status}, view.Details...)
+	}
+	if view.ProtocolPCID == "" {
+		view.ProtocolPCID = item.ProtocolPCID
+	}
+	return enrichProtocol(registry, view)
+}
+
+func buildArtifactInspectView(registry protocol.Registry, ref string, artifact model.ArtifactRecord) inspectView {
+	view := inspectView{
+		Reference:    ref,
+		Kind:         artifact.Kind,
+		RelatedID:    artifact.RelatedID,
+		RelatedCID:   artifact.RelatedCID,
+		ArtifactCID:  artifact.ArtifactCID,
+		ProtocolPCID: artifact.ProtocolPCID,
+		Signer:       artifact.Signer,
+		SignerKeyID:  artifact.SignerKeyID,
+		PayloadCID:   artifact.PayloadCID,
+		ProofCID:     artifact.ProofCID,
+		ObservedAt:   artifact.ObservedAt,
+	}
+	return enrichProtocol(registry, view)
+}
+
+func enrichProtocol(registry protocol.Registry, view inspectView) inspectView {
+	if view.ProtocolPCID == "" {
+		return view
+	}
+	if spec, ok := registry.FindByPCID(view.ProtocolPCID); ok {
+		view.ProtocolName = spec.Name
+		view.ProtocolPath = spec.Path
+	}
+	return view
+}
+
+func printInspectView(view inspectView) {
+	fmt.Printf("Reference: %s\n", view.Reference)
+	fmt.Printf("Kind: %s\n", emptyFallback(view.Kind, "(unknown)"))
+	fmt.Printf("Related ID: %s\n", emptyFallback(view.RelatedID, "(none)"))
+	if view.RelatedCID != "" {
+		fmt.Printf("Related CID: %s\n", view.RelatedCID)
+	}
+	fmt.Printf("Artifact CID: %s\n", emptyFallback(view.ArtifactCID, "(none)"))
+	fmt.Printf("Protocol: %s\n", emptyFallback(view.ProtocolName, "(unknown local spec)"))
+	fmt.Printf("Protocol pCID: %s\n", emptyFallback(view.ProtocolPCID, "(none)"))
+	if view.ProtocolPath != "" {
+		fmt.Printf("Protocol Doc: %s\n", view.ProtocolPath)
+	}
+	fmt.Printf("Signer: %s\n", emptyFallback(view.Signer, "(none)"))
+	fmt.Printf("Signer Key ID: %s\n", emptyFallback(view.SignerKeyID, "(none)"))
+	fmt.Printf("Payload CID: %s\n", emptyFallback(view.PayloadCID, "(none)"))
+	fmt.Printf("Proof CID: %s\n", emptyFallback(view.ProofCID, "(none)"))
+	fmt.Printf("Observed At: %s\n", emptyFallback(view.ObservedAt, "(none)"))
+	if view.RecordPath != "" {
+		fmt.Printf("Record Path: %s\n", view.RecordPath)
+	}
+	for _, line := range view.Details {
+		fmt.Println(line)
+	}
+}
+
+func emptyFallback(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func emitCommitmentArtifact(root string, store *ledger.Store, registry protocol.Registry, item model.Commitment, promisee string) (model.Commitment, error) {

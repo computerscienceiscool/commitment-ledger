@@ -266,6 +266,140 @@ func TestLifecycleFlowUsesV2EvidenceAndAssessmentProtocols(t *testing.T) {
 	}
 }
 
+func TestRunInspectResolvesIDsAndArtifactCIDs(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(root, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+
+	now := time.Date(2026, 6, 24, 11, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(root, store, registry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan initial: %v", err)
+	}
+	if err := runCommit(root, store, registry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+
+	commitments, err := store.LoadLatestCommitments()
+	if err != nil {
+		t.Fatalf("LoadLatestCommitments: %v", err)
+	}
+	var current model.Commitment
+	for _, item := range commitments {
+		current = item
+	}
+
+	writeFixtureRepo(t, repoPath, true)
+	gitCommitAll(t, repoPath, "Complete subtask 1")
+	if err := runScan(root, store, registry, now.Add(2*time.Hour), []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan second: %v", err)
+	}
+
+	evidenceItems, err := store.LoadEvidence()
+	if err != nil {
+		t.Fatalf("LoadEvidence: %v", err)
+	}
+	var checkedEvidence model.Evidence
+	for _, item := range evidenceItems {
+		if item.CommitmentID == current.CommitmentID && item.EvidenceType == model.EvidenceTypeTodoChecked {
+			checkedEvidence = item
+			break
+		}
+	}
+	if checkedEvidence.EvidenceID == "" {
+		t.Fatal("expected todo_checked evidence")
+	}
+
+	inspectCommitment := captureStdout(t, func() error {
+		return runInspect(root, store, registry, []string{current.CommitmentID})
+	})
+	for _, fragment := range []string{
+		"Reference: " + current.CommitmentID,
+		"Kind: commitment_promise",
+		"Related ID: " + current.CommitmentID,
+		"Protocol: " + protocol.CommitmentPromise,
+		"Protocol Doc: " + filepath.Join(root, "docs", "protocols", protocol.CommitmentPromise+".md"),
+		"Record Path: " + filepath.Join(root, "records", "commitments", current.CommitmentID+".md"),
+		"Current Status: open",
+	} {
+		if !strings.Contains(inspectCommitment, fragment) {
+			t.Fatalf("commitment inspect output missing %q:\n%s", fragment, inspectCommitment)
+		}
+	}
+
+	inspectEvidence := captureStdout(t, func() error {
+		return runInspect(root, store, registry, []string{checkedEvidence.EvidenceID})
+	})
+	for _, fragment := range []string{
+		"Reference: " + checkedEvidence.EvidenceID,
+		"Kind: commitment_evidence",
+		"Related ID: " + checkedEvidence.EvidenceID,
+		"Protocol: " + protocol.CommitmentEvidence,
+		"Current Commitment Status: open",
+		"Evidence Type: todo_checked",
+		"Record Path: none (evidence stays in data/evidence.jsonl and commitment markdown)",
+	} {
+		if !strings.Contains(inspectEvidence, fragment) {
+			t.Fatalf("evidence inspect output missing %q:\n%s", fragment, inspectEvidence)
+		}
+	}
+
+	inspectArtifact := captureStdout(t, func() error {
+		return runInspect(root, store, registry, []string{checkedEvidence.ArtifactCID})
+	})
+	for _, fragment := range []string{
+		"Reference: " + checkedEvidence.ArtifactCID,
+		"Kind: commitment_evidence",
+		"Artifact CID: " + checkedEvidence.ArtifactCID,
+		"Protocol pCID: " + checkedEvidence.ProtocolPCID,
+	} {
+		if !strings.Contains(inspectArtifact, fragment) {
+			t.Fatalf("artifact inspect output missing %q:\n%s", fragment, inspectArtifact)
+		}
+	}
+}
+
+func TestRunInspectRejectsUnknownReference(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	err = runInspect(root, store, registry, []string{"does-not-exist"})
+	if err == nil || !strings.Contains(err.Error(), "unknown inspect reference") {
+		t.Fatalf("runInspect error = %v, want unknown inspect reference", err)
+	}
+}
+
 func TestRunAssessRejectsKeptForIncompleteParentTarget(t *testing.T) {
 	root := t.TempDir()
 	copyProtocolDocs(t, root)

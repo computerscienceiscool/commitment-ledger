@@ -49,6 +49,7 @@ commitment-ledger conformance --signer commitment-ledger --version v0.1.0
 commitment-ledger expire
 commitment-ledger status
 commitment-ledger report --promiser JJ
+commitment-ledger inspect COMMITMENT-...
 ```
 
 ## Make Targets
@@ -66,6 +67,7 @@ Common targets:
 - `make cli ARGS='status'`: run arbitrary CLI commands through the standard local wrapper
 - `make scan CONFIG=config/repos.json`: scan a configured repo set
 - `make report REPORT_ARGS='--promiser Alice'`: run a filtered report
+- `make inspect INSPECT_ARGS='COMMITMENT-...'`: inspect a commitment ID, evidence ID, assessment ID, or artifact CID
 - `make conformance VERSION=v0.1.0 SIGNER=commitment-ledger`: emit a local conformance claim
 
 Demo-oriented targets:
@@ -117,6 +119,7 @@ Observed work targets are always branch-qualified, for example
   signed `grid([42(pCID), payload, proof])` artifacts stored in local CAS.
 - JSONL and Markdown files are projections over those raw artifacts.
 - Repo status summaries surface kept and non-kept terminal outcomes separately.
+- `inspect` resolves commitment IDs, evidence IDs, assessment IDs, and artifact CIDs back to their local artifact metadata and frozen protocol docs.
 
 ## Demo Docs
 
