@@ -19,7 +19,7 @@ Retrospective note:
 - [x] TODO-pivok - Add machine-readable contract documentation and versioning (`TODO/TODO-pivok-add-machine-readable-contract-documentation-and-versioning.md`)
 - [x] TODO-mesad - Update demo and operator videos (`TODO/TODO-mesad-update-demo-and-operator-videos.md`)
 - [ ] TODO-qatig - Update the site (`TODO/TODO-qatig-update-the-site.md`)
-- [ ] TODO-dorun - Update documentation (`TODO/TODO-dorun-update-documentation.md`)
+- [x] TODO-dorun - Update documentation (`TODO/TODO-dorun-update-documentation.md`)
 - [x] TODO-zarek - Add commitment-level exchange reconciliation (`TODO/TODO-zarek-add-commitment-level-exchange-reconciliation.md`)
 - [x] TODO-nopud - Harden identity restore conflict and partial-restore behavior (`TODO/TODO-nopud-harden-identity-restore-conflict-and-partial-restore-behavior.md`)
 - [x] TODO-garuk - Add negative-path exchange fixtures (`TODO/TODO-garuk-add-negative-path-exchange-fixtures.md`)

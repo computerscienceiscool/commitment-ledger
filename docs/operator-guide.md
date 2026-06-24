@@ -51,6 +51,9 @@ make demo-status
 make demo-report REPORT_ARGS='--promiser Alice'
 ```
 
+The rendered walkthrough asset for that happy-path flow is
+`docs/demo-video.mp4`.
+
 ## Core Commands
 
 ### `scan`

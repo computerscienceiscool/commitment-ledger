@@ -15,6 +15,14 @@ preserving later assessment as signed, CID-addressed protocol artifacts.
 4. Re-run `scan` to derive local evidence, then use `assess` to record the
    final judgment.
 
+For day-to-day operation after that first pass, the usual operator loop is:
+
+- `status` for repo-level progress
+- `status --exchange` for import and receipt summary
+- `inspect` for one commitment or artifact
+- `verify` for local integrity and trust-policy checks
+- `doctor --repairable` before and after backup, restore, or exchange recovery
+
 ## Layout
 
 - `cmd/commitment-ledger`: CLI entrypoint
@@ -220,7 +228,8 @@ with `commitment-ledger identity backup --out /safe/path/identities.json`.
 Add `--include-imported-support` when you want the backup file to carry
 `config/imported-identities/` and `data/imported-protocols/` too.
 
-After restoring, run `make doctor` before trusting the restored state.
+After restoring, run `make doctor DOCTOR_ARGS='--repairable'`, apply any
+suggested `repair` flags, and only then trust the restored state.
 
 ## Demo Docs
 
@@ -229,6 +238,7 @@ After restoring, run `make doctor` before trusting the restored state.
 - `docs/demo-script.md` is the spoken walkthrough with commands, files, and demo narration.
 - `docs/operator-guide.md` is the practical runbook for local operation, inspection, and troubleshooting.
 - `docs/recovery-checklist.md` is the short recovery matrix for common local failure modes.
+- `docs/machine-readable-contracts.md` defines the current `cli-json-v1` automation contract.
 - `docs/trust-and-verification.md` explains what local artifact verification proves and what it does not prove.
 
 ## Version Notes

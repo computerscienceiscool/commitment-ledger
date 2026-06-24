@@ -13,6 +13,9 @@ backup.
 go run ./cmd/commitment-ledger identity restore --in /safe/path/identities.json
 ```
 
+If that backup was created with `identity backup --include-imported-support`,
+the same restore step also reinstalls imported signer and protocol support.
+
 3. Run:
 
 ```bash
@@ -39,6 +42,9 @@ go run ./cmd/commitment-ledger verify COMMITMENT-...
 
 - Run `repair --import-artifacts`.
 
+If `doctor` says the recorded bundle source path is gone, recover that original
+bundle file or re-export it from another repo first.
+
 ### Missing imported signer or protocol support
 
 - Run `repair --import-support`.
@@ -51,6 +57,8 @@ go run ./cmd/commitment-ledger verify COMMITMENT-...
 
 - Restore `config/identities/archive/` from backup.
 - If you exported identity history separately, run `identity restore --in ...`.
+- If that backup also carried imported support, it can restore that support at
+  the same time.
 
 ### Warnings should fail CI
 
@@ -61,3 +69,6 @@ go run ./cmd/commitment-ledger verify COMMITMENT-...
 - `repair` does not recreate missing historical private keys from thin air.
 - `repair` does not resolve conflicting imported state automatically.
 - `identity restore` will refuse to overwrite a different local key file.
+- `repair` cannot reconstruct imported artifact envelopes or support files once
+  the recorded bundle source path is gone and no replacement bundle is
+  available.
