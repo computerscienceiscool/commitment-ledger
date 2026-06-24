@@ -25,6 +25,7 @@ For day-to-day operation after that first pass, the usual operator loop is:
 
 ## Layout
 
+- `index.html`: GitHub Pages landing page for the project site
 - `cmd/commitment-ledger`: CLI entrypoint
 - `internal/config`: repo tracking configuration loader
 - `internal/gitrepo`: local git observation helpers
@@ -233,8 +234,9 @@ suggested `repair` flags, and only then trust the restored state.
 
 ## Demo Docs
 
+- `index.html` is the project Pages landing page and links to the current demo, docs, and source.
 - `docs/demo-video.mp4` is the rendered walkthrough asset for the current Alice/Bob/Mallory demo flow.
-- `docs/demo-plan.md` lays out a real-repo demo using Alice, Bob, Dave, and Mallory roles.
+- `docs/demo-plan.md` lays out the seeded synthetic demo using Alice, Bob, Dave, and Mallory roles.
 - `docs/demo-script.md` is the spoken walkthrough with commands, files, and demo narration.
 - `docs/operator-guide.md` is the practical runbook for local operation, inspection, and troubleshooting.
 - `docs/recovery-checklist.md` is the short recovery matrix for common local failure modes.

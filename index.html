@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>commitment-ledger</title>
+  <meta
+    name="description"
+    content="commitment-ledger is a local-first PromiseGrid app prototype for tracking commitments against TODO work, preserving evidence, and recording assessments as signed CID-addressed artifacts."
+  >
+  <style>
+    :root {
+      --bg: #f3efe7;
+      --bg-strong: #e6ddd0;
+      --panel: rgba(255, 251, 245, 0.9);
+      --panel-strong: #fffaf2;
+      --ink: #1d1a17;
+      --muted: #595048;
+      --accent: #8d3f22;
+      --accent-2: #0e6a64;
+      --accent-3: #3c4f91;
+      --border: rgba(29, 26, 23, 0.12);
+      --shadow: 0 22px 64px rgba(60, 42, 26, 0.12);
+      --radius: 24px;
+      --radius-sm: 14px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(141, 63, 34, 0.12), transparent 34%),
+        radial-gradient(circle at 86% 18%, rgba(14, 106, 100, 0.14), transparent 28%),
+        linear-gradient(180deg, #fbf7ef 0%, var(--bg) 52%, #efe6d8 100%);
+      font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif;
+      line-height: 1.55;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    code {
+      font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+
+    pre {
+      margin: 0;
+      overflow-x: auto;
+      padding: 18px;
+      font-size: 0.92rem;
+      line-height: 1.6;
+      font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    }
+
+    .page {
+      width: min(1140px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 34px;
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) + 6px);
+      background:
+        linear-gradient(135deg, rgba(255, 251, 244, 0.96), rgba(243, 239, 231, 0.88)),
+        linear-gradient(45deg, rgba(141, 63, 34, 0.08), rgba(14, 106, 100, 0.06));
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -90px -130px auto;
+      width: 320px;
+      height: 320px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(60, 79, 145, 0.18), transparent 68%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 7px 12px;
+      border: 1px solid rgba(141, 63, 34, 0.16);
+      border-radius: 999px;
+      background: rgba(255, 248, 241, 0.92);
+      color: var(--accent);
+      font-size: 0.86rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+      line-height: 1.05;
+    }
+
+    h1 {
+      margin-top: 18px;
+      font-size: clamp(2.8rem, 5vw, 5rem);
+      letter-spacing: -0.04em;
+    }
+
+    h2 {
+      font-size: clamp(1.9rem, 3vw, 2.7rem);
+      letter-spacing: -0.03em;
+    }
+
+    h3 {
+      font-size: 1.35rem;
+    }
+
+    .lede {
+      width: min(780px, 100%);
+      margin: 18px 0 0;
+      font-size: clamp(1.05rem, 2vw, 1.24rem);
+      color: var(--muted);
+    }
+
+    .hero-grid,
+    .feature-grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .hero-grid {
+      grid-template-columns: 1.45fr 1fr;
+      align-items: start;
+      margin-top: 28px;
+    }
+
+    .feature-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .panel,
+    .card,
+    .terminal,
+    .video-shell {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel);
+      backdrop-filter: blur(10px);
+      box-shadow: var(--shadow);
+    }
+
+    .panel,
+    .card,
+    .video-shell {
+      padding: 22px;
+    }
+
+    .signal,
+    .tag {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .signal {
+      margin-bottom: 12px;
+      background: rgba(14, 106, 100, 0.1);
+      color: var(--accent-2);
+    }
+
+    .tag {
+      margin-bottom: 12px;
+      background: rgba(60, 79, 145, 0.1);
+      color: var(--accent-3);
+    }
+
+    .hero-links,
+    .link-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .hero-links {
+      margin-top: 22px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px 16px;
+      border: 1px solid transparent;
+      border-radius: 999px;
+      color: white;
+      background: linear-gradient(135deg, var(--accent), #b65d32);
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .button.secondary {
+      color: var(--ink);
+      background: rgba(255, 251, 245, 0.92);
+      border-color: rgba(29, 26, 23, 0.12);
+    }
+
+    .terminal {
+      overflow: hidden;
+      background: #171311;
+      color: #f7efe5;
+    }
+
+    .terminal-bar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 14px 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      color: rgba(247, 239, 229, 0.72);
+      font-size: 0.85rem;
+    }
+
+    .terminal-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ef8a5a;
+      box-shadow: 16px 0 0 #e4bb59, 32px 0 0 #56b6a5;
+      margin-right: 28px;
+    }
+
+    section {
+      margin-top: 28px;
+    }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: end;
+      margin-bottom: 16px;
+    }
+
+    .section-head p,
+    .card p,
+    .panel p,
+    .link-tile span,
+    .video-meta,
+    .footer {
+      color: var(--muted);
+    }
+
+    .section-head p,
+    .card p {
+      margin: 0;
+    }
+
+    .card p {
+      margin-top: 12px;
+    }
+
+    .video-shell {
+      background: var(--panel-strong);
+    }
+
+    video {
+      display: block;
+      width: 100%;
+      border-radius: calc(var(--radius) - 6px);
+      background: #100c09;
+    }
+
+    .video-meta {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 4px 4px;
+      font-size: 0.95rem;
+    }
+
+    .link-tile {
+      flex: 1 1 220px;
+      min-width: 0;
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: rgba(255, 251, 245, 0.88);
+      text-decoration: none;
+    }
+
+    .link-tile strong {
+      display: block;
+      font-size: 1rem;
+    }
+
+    .link-tile span {
+      display: block;
+      margin-top: 8px;
+      font-size: 0.95rem;
+    }
+
+    .footer {
+      margin-top: 32px;
+      font-size: 0.95rem;
+      text-align: center;
+    }
+
+    @media (max-width: 920px) {
+      .hero-grid,
+      .feature-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .section-head {
+        flex-direction: column;
+        align-items: start;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .page {
+        width: min(100% - 18px, 1140px);
+        padding-top: 10px;
+      }
+
+      .hero,
+      .panel,
+      .card,
+      .video-shell {
+        border-radius: 18px;
+      }
+
+      .hero {
+        padding: 22px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Go CLI · GitHub Pages · PromiseGrid-style</div>
+      <h1>commitment-ledger</h1>
+      <p class="lede">
+        <code>commitment-ledger</code> is a local-first PromiseGrid app prototype
+        for tracking commitments against repository TODO work, preserving
+        evidence, and recording assessments as signed CID-addressed artifacts.
+      </p>
+
+      <div class="hero-grid">
+        <div class="panel">
+          <span class="signal">Why teams use it</span>
+          <p>
+            It separates available work from promises about that work, keeps the
+            exact signed artifact bytes in local CAS, and gives operators one
+            workflow for inspection, verification, exchange, and recovery.
+          </p>
+          <div class="hero-links">
+            <a class="button" href="./docs/demo-video.mp4">Watch Demo Video</a>
+            <a class="button secondary" href="https://github.com/computerscienceiscool/commitment-ledger">View Source</a>
+            <a class="button secondary" href="https://github.com/computerscienceiscool/commitment-ledger/blob/main/README.md">Read README</a>
+            <a class="button secondary" href="https://github.com/computerscienceiscool/commitment-ledger/blob/main/docs/demo-script.md">Demo Script</a>
+            <a class="button secondary" href="https://github.com/computerscienceiscool/commitment-ledger/blob/main/docs/operator-guide.md">Operator Guide</a>
+          </div>
+        </div>
+
+        <div class="terminal">
+          <div class="terminal-bar">
+            <span class="terminal-dot"></span>
+            <span>commitment-ledger verify --json ASSESSMENT-...</span>
+          </div>
+          <pre><code>{
+  "kind": "commitment_assessment",
+  "signature_verified": true,
+  "signer_identity_verified": true,
+  "local_protocol_match": true,
+  "signer_trusted": true,
+  "protocol_trusted": true,
+  "overall_trusted": true
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="features-title">
+      <div class="section-head">
+        <div>
+          <h2 id="features-title">One lifecycle, four layers</h2>
+        </div>
+        <p>
+          The tool is built around work observation, explicit promises,
+          collected evidence, and separate human judgment.
+        </p>
+      </div>
+
+      <div class="feature-grid">
+        <article class="card">
+          <span class="tag">Layer 1</span>
+          <h3><code>scan</code></h3>
+          <p>Observe branch-qualified TODO work from local repos without editing the source repos.</p>
+        </article>
+
+        <article class="card">
+          <span class="tag">Layer 2</span>
+          <h3><code>commit</code></h3>
+          <p>Create commitments against discovered work targets and emit signed promise artifacts.</p>
+        </article>
+
+        <article class="card">
+          <span class="tag">Layer 3</span>
+          <h3><code>evidence</code></h3>
+          <p>Record scan-derived or manual evidence while preserving commitment scope and artifact linkage.</p>
+        </article>
+
+        <article class="card">
+          <span class="tag">Layer 4</span>
+          <h3><code>assess</code></h3>
+          <p>Turn evidence into explicit kept, broken, partial, delegated, or refused outcomes.</p>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="operator-title">
+      <div class="section-head">
+        <div>
+          <h2 id="operator-title">Operator surface</h2>
+        </div>
+        <p>
+          The repo is now more than a basic lifecycle CLI. It includes the
+          operator views needed for local exchange, verification, and recovery.
+        </p>
+      </div>
+
+      <div class="feature-grid">
+        <article class="card">
+          <span class="tag">Inspect</span>
+          <h3><code>inspect</code> + <code>verify</code></h3>
+          <p>Resolve artifact IDs, protocol docs, signer lineage, import provenance, and local trust status.</p>
+        </article>
+
+        <article class="card">
+          <span class="tag">Exchange</span>
+          <h3><code>export</code> <code>import</code> <code>send</code> <code>receive</code></h3>
+          <p>Move bundles between repos, emit receive receipts, and preserve provenance for later audit.</p>
+        </article>
+
+        <article class="card">
+          <span class="tag">Audit</span>
+          <h3><code>status --exchange</code> <code>report --imports</code> <code>reconcile</code></h3>
+          <p>Spot repeated imports, multi-source artifacts, receipt coverage, signer state, and trust results.</p>
+        </article>
+
+        <article class="card">
+          <span class="tag">Recovery</span>
+          <h3><code>doctor</code> <code>repair</code> <code>identity</code></h3>
+          <p>Validate local state, classify repairable failures, and manage signer history, backup, restore, and rotation.</p>
+        </article>
+      </div>
+    </section>
+
+    <section aria-labelledby="promisegrid-title">
+      <div class="section-head">
+        <div>
+          <h2 id="promisegrid-title">PromiseGrid shape</h2>
+        </div>
+        <p>
+          The implementation is local-first, but it follows the PromiseGrid
+          discipline of frozen protocol docs, explicit conformance claims, and
+          content-addressed artifacts.
+        </p>
+      </div>
+
+      <div class="terminal">
+        <div class="terminal-bar">
+          <span class="terminal-dot"></span>
+          <span>artifact model</span>
+        </div>
+        <pre><code>grid([42(pCID), payload, proof])
+
+commitment-promise-v1
+commitment-evidence-v2
+commitment-assessment-v2
+implementation-conformance-v1
+exchange-receipt-v1</code></pre>
+      </div>
+    </section>
+
+    <section aria-labelledby="demo-title">
+      <div class="section-head">
+        <div>
+          <h2 id="demo-title">Featured demo</h2>
+        </div>
+        <p>
+          The checked-in walkthrough uses seeded synthetic repos for Alice, Bob,
+          Dave, and Mallory so the demo does not require real project
+          information.
+        </p>
+      </div>
+
+      <div class="video-shell">
+        <video controls preload="metadata" playsinline>
+          <source src="./docs/demo-video.mp4" type="video/mp4">
+          Your browser does not support the video tag.
+        </video>
+        <div class="video-meta">
+          <span>Horizontal MP4 walkthrough checked into the repo.</span>
+          <a href="./docs/demo-video.mp4">Open the raw video file</a>
+        </div>
+      </div>
+    </section>
+
+    <section aria-labelledby="examples-title">
+      <div class="section-head">
+        <div>
+          <h2 id="examples-title">Example commands</h2>
+        </div>
+        <p>
+          The CLI stays readable by default, but it also supports machine-readable
+          JSON, local bundle exchange, and recovery-oriented workflows.
+        </p>
+      </div>
+
+      <div class="terminal">
+        <div class="terminal-bar">
+          <span class="terminal-dot"></span>
+          <span>examples</span>
+        </div>
+        <pre><code>commitment-ledger scan --config config/repos.demo.json
+commitment-ledger commit --promiser Alice --repo alice-demo --branch main --target alice-demo/main/TODO-ravud/1 --due 2026-07-01 --promise "I promise to complete TODO-ravud subtask 1."
+commitment-ledger inspect --json COMMITMENT-...
+commitment-ledger verify --json ASSESSMENT-...
+commitment-ledger status --exchange --json
+commitment-ledger report --imports --json
+commitment-ledger reconcile --commitment COMMITMENT-... --json
+commitment-ledger doctor --repairable
+commitment-ledger repair --json --import-artifacts --import-support --identity-lineage
+commitment-ledger identity backup --include-imported-support --out /safe/path/identities.json</code></pre>
+      </div>
+    </section>
+
+    <section aria-labelledby="links-title">
+      <div class="section-head">
+        <div>
+          <h2 id="links-title">Docs and assets</h2>
+        </div>
+        <p>
+          Everything linked here is checked into the repo so the page can stay
+          aligned with the current implementation.
+        </p>
+      </div>
+
+      <div class="link-row">
+        <a class="link-tile" href="https://github.com/computerscienceiscool/commitment-ledger/blob/main/README.md">
+          <strong>README</strong>
+          <span>Overview, command list, JSON contract notes, and current operator loop.</span>
+        </a>
+        <a class="link-tile" href="https://github.com/computerscienceiscool/commitment-ledger/blob/main/docs/operator-guide.md">
+          <strong>Operator guide</strong>
+          <span>Runbook for inspect, verify, exchange, trust policy, doctor, repair, and identity workflow.</span>
+        </a>
+        <a class="link-tile" href="https://github.com/computerscienceiscool/commitment-ledger/blob/main/docs/demo-script.md">
+          <strong>Demo script</strong>
+          <span>Spoken walkthrough for the seeded synthetic Alice/Bob/Dave/Mallory scenario.</span>
+        </a>
+        <a class="link-tile" href="https://github.com/computerscienceiscool/commitment-ledger/blob/main/docs/demo-plan.md">
+          <strong>Demo plan</strong>
+          <span>Setup plan for the seeded demo repos and the happy-path plus contrast scenarios.</span>
+        </a>
+        <a class="link-tile" href="https://github.com/computerscienceiscool/commitment-ledger/blob/main/docs/recovery-checklist.md">
+          <strong>Recovery checklist</strong>
+          <span>Short failure matrix for restore, repair, missing bundle paths, and signer-history issues.</span>
+        </a>
+        <a class="link-tile" href="https://github.com/computerscienceiscool/commitment-ledger/blob/main/CHANGELOG.md">
+          <strong>Conformance log</strong>
+          <span>Repo-level publication of current and historical frozen protocol doc-CIDs.</span>
+        </a>
+      </div>
+    </section>
+
+    <p class="footer">
+      Built for local repos, signed artifacts, seeded demos, and PromiseGrid-style operator discipline.
+    </p>
+  </main>
+</body>
+</html>
