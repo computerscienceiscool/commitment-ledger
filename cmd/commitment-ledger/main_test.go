@@ -1301,6 +1301,8 @@ func TestRunStatusExchangeAndReportImports(t *testing.T) {
 		"Total imports: 1",
 		"Unique imported artifacts: 1",
 		"Trusted imports: 1",
+		"Active signer artifacts: 1",
+		"Receipt signers: commitment-ledger",
 		"Receipt artifacts: 1",
 		"Imported artifacts with receipts: 1",
 		"Mode receive: 1",
@@ -1320,6 +1322,7 @@ func TestRunStatusExchangeAndReportImports(t *testing.T) {
 		"Modes: receive",
 		"Receipt Artifacts: 1",
 		"Receipt Signers: commitment-ledger",
+		"Signer States: active",
 	} {
 		if !strings.Contains(reportOut, fragment) {
 			t.Fatalf("report --imports output missing %q:\n%s", fragment, reportOut)
@@ -1830,6 +1833,62 @@ func TestDoctorDetectsMalformedArchivedIdentityEntry(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("doctor report missing malformed archived identity finding: %#v", report)
+	}
+}
+
+func TestRunRepairIdentityLineageNormalizesArchivedFilename(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	if _, _, _, err := identity.LoadOrCreate(root, "Alice"); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+	if err := runIdentity(root, []string{"rotate", "--name", "Alice"}); err != nil {
+		t.Fatalf("runIdentity rotate: %v", err)
+	}
+	goodPath := filepath.Join(root, "config", "identities", "archive", archiveIdentityFilename("Alice", "alice-ed25519-v1"))
+	badPath := filepath.Join(root, "config", "identities", "archive", "wrong-name.json")
+	if err := os.Rename(goodPath, badPath); err != nil {
+		t.Fatalf("rename archived identity: %v", err)
+	}
+
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	report, err := doctorReport(root, store, registry)
+	if err != nil {
+		t.Fatalf("doctorReport before repair: %v", err)
+	}
+	foundRepairable := false
+	for _, issue := range report.RepairableErrors {
+		if strings.Contains(issue, "filename mismatch") || strings.Contains(issue, "missing archived key file") {
+			foundRepairable = true
+			break
+		}
+	}
+	if !foundRepairable {
+		t.Fatalf("expected repairable lineage finding before repair: %#v", report)
+	}
+
+	out := captureStdout(t, func() error {
+		return runRepair(root, store, registry, []string{"--identity-lineage"})
+	})
+	if !strings.Contains(out, "Normalized archived identity files: 1") {
+		t.Fatalf("unexpected repair identity-lineage output:\n%s", out)
+	}
+	if _, err := os.Stat(goodPath); err != nil {
+		t.Fatalf("expected normalized archived identity path: %v", err)
+	}
+
+	report, err = doctorReport(root, store, registry)
+	if err != nil {
+		t.Fatalf("doctorReport after repair: %v", err)
+	}
+	for _, issue := range report.Errors {
+		if strings.Contains(issue, "filename mismatch") || strings.Contains(issue, "missing archived key file") {
+			t.Fatalf("expected lineage repair to clear archive filename issues, still have: %#v", report)
+		}
 	}
 }
 

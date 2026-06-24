@@ -136,8 +136,9 @@ Use `status --exchange` for import and exchange summary:
 - unique imported artifacts and source paths
 - support installation count
 - trusted vs untrusted imports under the current trust policy
+- imported artifact signer state counts: active, archived, imported, or unknown
 - per-mode counts such as `import` vs `receive`
-- receipt-artifact counts and how many imported artifacts have been acknowledged
+- receipt-artifact counts, receipt signers, and how many imported artifacts have been acknowledged
 
 Use `--json` when you need the repo-level or exchange-level status summary in a
 stable machine-readable form.
@@ -158,8 +159,8 @@ target.
 Use `report --imports` when you want imported-artifact summaries grouped by
 source path and annotated with the current trust-policy result.
 
-That summary now also includes per-source receipt counts and receipt signers for
-local `receive` acknowledgements.
+That summary now also includes per-source receipt counts, receipt signers, and
+locally resolved signer states for imported artifacts.
 
 Use `--json` when you need machine-readable summaries for automation.
 
@@ -383,6 +384,7 @@ go run ./cmd/commitment-ledger repair --records
 go run ./cmd/commitment-ledger repair --protocol-cas
 go run ./cmd/commitment-ledger repair --import-artifacts
 go run ./cmd/commitment-ledger repair --import-support
+go run ./cmd/commitment-ledger repair --identity-lineage
 ```
 
 `repair` is intentionally conservative. Today it can:
@@ -390,6 +392,11 @@ go run ./cmd/commitment-ledger repair --import-support
 - rebuild commitment and assessment Markdown projection files from JSONL state
 - restore built-in frozen protocol docs into local CAS
 - restore missing imported artifact envelopes from previously recorded bundle source paths
+- restore missing imported signer and protocol support files from previously recorded bundle source paths
+- normalize archived identity filenames when the archived key material still exists locally under the wrong name
+
+It does not recreate missing archived private keys that no longer exist anywhere
+local. Those remain manual recovery cases.
 - restore missing imported signer and protocol support files from previously recorded bundle source paths
 
 It still does not resolve projection conflicts or synthesize bundle sources that
@@ -592,6 +599,33 @@ What to do:
 - inspect the artifact and signer identity carefully
 - run `identity history NAME --json` to confirm whether the signing key is now
   archived or only present through imported support
+
+### `doctor` reports archived identity filename mismatch
+
+Cause:
+
+- an archived key file still exists locally, but under the wrong filename
+
+What to do:
+
+- run `repair --identity-lineage`
+- rerun `doctor` to confirm the mismatch is gone
+
+### `doctor` reports missing archived key file for a historical signer
+
+Cause:
+
+- a historical private key expected under `config/identities/archive/` is gone
+- or the only remaining copy is malformed and unreadable
+
+What to do:
+
+- first run `repair --identity-lineage` in case the key still exists under the
+  wrong filename
+- if that does not clear the finding, restore the archived identity file from
+  backup
+- use `identity history NAME --json` and `inspect` or `verify` on the affected
+  artifact to confirm which key ID is missing
 
 ### `import` or `receive` says `... conflict ...`
 

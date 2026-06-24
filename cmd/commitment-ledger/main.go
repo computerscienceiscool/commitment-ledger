@@ -246,9 +246,9 @@ func runStatus(root string, store *ledger.Store, args []string) error {
 			return err
 		}
 		if *jsonOut {
-			return printJSON(summarizeImports(policy, imports, artifacts))
+			return printJSON(summarizeImports(root, policy, imports, artifacts))
 		}
-		printExchangeStatus(policy, imports, artifacts)
+		printExchangeStatus(root, policy, imports, artifacts)
 		return nil
 	}
 	workItems, err := store.LoadLatestWorkItems()
@@ -530,9 +530,9 @@ func runReport(root string, store *ledger.Store, args []string) error {
 			return err
 		}
 		if *jsonOut {
-			return printJSON(summarizeImports(policy, imports, artifacts))
+			return printJSON(summarizeImports(root, policy, imports, artifacts))
 		}
-		printImportReport(policy, imports, artifacts)
+		printImportReport(root, policy, imports, artifacts)
 		return nil
 	}
 
@@ -1037,17 +1037,19 @@ func runRepair(root string, store *ledger.Store, registry protocol.Registry, arg
 	protocolCAS := fs.Bool("protocol-cas", false, "restore built-in frozen protocol docs into local CAS")
 	importArtifacts := fs.Bool("import-artifacts", false, "restore imported artifact envelopes from bundle source paths when possible")
 	importSupport := fs.Bool("import-support", false, "restore imported signer and protocol support from bundle source paths when possible")
+	identityLineage := fs.Bool("identity-lineage", false, "normalize archived identity filenames when the original key material is still present")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("repair does not accept positional references")
 	}
-	if !*records && !*protocolCAS && !*importArtifacts && !*importSupport {
+	if !*records && !*protocolCAS && !*importArtifacts && !*importSupport && !*identityLineage {
 		*records = true
 		*protocolCAS = true
 		*importArtifacts = true
 		*importSupport = true
+		*identityLineage = true
 	}
 
 	var rewrittenCommitments int
@@ -1105,6 +1107,14 @@ func runRepair(root string, store *ledger.Store, registry protocol.Registry, arg
 		restoredImportedProtocols = protocols
 		restoredImportedSigners = signers
 	}
+	normalizedArchivedIdentities := 0
+	if *identityLineage {
+		count, err := repairIdentityLineage(root)
+		if err != nil {
+			return err
+		}
+		normalizedArchivedIdentities = count
+	}
 
 	fmt.Printf("Rewrote commitment records: %d\n", rewrittenCommitments)
 	fmt.Printf("Rewrote assessment records: %d\n", rewrittenAssessments)
@@ -1112,6 +1122,7 @@ func runRepair(root string, store *ledger.Store, registry protocol.Registry, arg
 	fmt.Printf("Restored imported artifact envelopes: %d\n", restoredImportedArtifacts)
 	fmt.Printf("Restored imported protocol support files: %d\n", restoredImportedProtocols)
 	fmt.Printf("Restored imported signer support files: %d\n", restoredImportedSigners)
+	fmt.Printf("Normalized archived identity files: %d\n", normalizedArchivedIdentities)
 	return nil
 }
 
@@ -1599,6 +1610,42 @@ func parseBundleAtPath(path string) (exchange.Bundle, error) {
 		return exchange.Bundle{}, fmt.Errorf("parse import bundle %q: %w", path, err)
 	}
 	return bundle, nil
+}
+
+func repairIdentityLineage(root string) (int, error) {
+	dir := filepath.Join(root, "config", "identities", "archive")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read identity archive dir %q: %w", dir, err)
+	}
+	normalized := 0
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		ident, err := readIdentityFile(path)
+		if err != nil {
+			continue
+		}
+		expected := filepath.Join(dir, archiveIdentityFilename(ident.Name, ident.KeyID))
+		if path == expected {
+			continue
+		}
+		if _, err := os.Stat(expected); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return normalized, fmt.Errorf("stat archived identity target %q: %w", expected, err)
+		}
+		if err := os.Rename(path, expected); err != nil {
+			return normalized, fmt.Errorf("rename archived identity %q -> %q: %w", path, expected, err)
+		}
+		normalized++
+	}
+	return normalized, nil
 }
 
 func importedProtocolHealthy(root string, pcid string) bool {
@@ -2652,23 +2699,30 @@ func yesNo(value bool) string {
 	return "no"
 }
 
-func printExchangeStatus(policy trust.Policy, imports []model.ImportRecord, artifacts []model.ArtifactRecord) {
-	summary := summarizeImports(policy, imports, artifacts)
+func printExchangeStatus(root string, policy trust.Policy, imports []model.ImportRecord, artifacts []model.ArtifactRecord) {
+	summary := summarizeImports(root, policy, imports, artifacts)
 	fmt.Printf("Total imports: %d\n", summary.Total)
 	fmt.Printf("Unique imported artifacts: %d\n", summary.UniqueArtifacts)
 	fmt.Printf("Unique import sources: %d\n", summary.UniqueSources)
 	fmt.Printf("Support installed: %d\n", summary.SupportInstalled)
 	fmt.Printf("Trusted imports: %d\n", summary.Trusted)
 	fmt.Printf("Untrusted imports: %d\n", summary.Untrusted)
+	fmt.Printf("Active signer artifacts: %d\n", summary.ActiveSignerArtifacts)
+	fmt.Printf("Archived signer artifacts: %d\n", summary.ArchivedSignerArtifacts)
+	fmt.Printf("Imported signer artifacts: %d\n", summary.ImportedSignerArtifacts)
+	fmt.Printf("Unknown signer artifacts: %d\n", summary.UnknownSignerArtifacts)
 	fmt.Printf("Receipt artifacts: %d\n", summary.ReceiptArtifacts)
 	fmt.Printf("Imported artifacts with receipts: %d\n", summary.ImportedArtifactsWithReceipts)
+	if len(summary.ReceiptSigners) > 0 {
+		fmt.Printf("Receipt signers: %s\n", strings.Join(summary.ReceiptSigners, ", "))
+	}
 	for _, mode := range summary.Modes {
 		fmt.Printf("Mode %s: %d\n", mode, summary.ByMode[mode])
 	}
 }
 
-func printImportReport(policy trust.Policy, imports []model.ImportRecord, artifacts []model.ArtifactRecord) {
-	summary := summarizeImports(policy, imports, artifacts)
+func printImportReport(root string, policy trust.Policy, imports []model.ImportRecord, artifacts []model.ArtifactRecord) {
+	summary := summarizeImports(root, policy, imports, artifacts)
 	fmt.Printf("Total imports: %d\n", summary.Total)
 	for _, source := range summary.Sources {
 		item := summary.BySource[source]
@@ -2679,6 +2733,9 @@ func printImportReport(policy trust.Policy, imports []model.ImportRecord, artifa
 		fmt.Printf("Receipt Artifacts: %d\n", item.ReceiptArtifacts)
 		if len(item.ReceiptSigners) > 0 {
 			fmt.Printf("Receipt Signers: %s\n", strings.Join(item.ReceiptSigners, ", "))
+		}
+		if len(item.SignerStates) > 0 {
+			fmt.Printf("Signer States: %s\n", strings.Join(item.SignerStates, ", "))
 		}
 		fmt.Printf("Last Imported At: %s\n", item.LastImportedAt)
 	}
@@ -2691,8 +2748,13 @@ type importSummary struct {
 	SupportInstalled              int                            `json:"support_installed"`
 	Trusted                       int                            `json:"trusted"`
 	Untrusted                     int                            `json:"untrusted"`
+	ActiveSignerArtifacts         int                            `json:"active_signer_artifacts"`
+	ArchivedSignerArtifacts       int                            `json:"archived_signer_artifacts"`
+	ImportedSignerArtifacts       int                            `json:"imported_signer_artifacts"`
+	UnknownSignerArtifacts        int                            `json:"unknown_signer_artifacts"`
 	ReceiptArtifacts              int                            `json:"receipt_artifacts"`
 	ImportedArtifactsWithReceipts int                            `json:"imported_artifacts_with_receipts"`
+	ReceiptSigners                []string                       `json:"receipt_signers,omitempty"`
 	ByMode                        map[string]int                 `json:"by_mode"`
 	Modes                         []string                       `json:"modes"`
 	BySource                      map[string]importSourceSummary `json:"by_source"`
@@ -2705,17 +2767,21 @@ type importSourceSummary struct {
 	Modes            []string `json:"modes"`
 	ReceiptArtifacts int      `json:"receipt_artifacts"`
 	ReceiptSigners   []string `json:"receipt_signers,omitempty"`
+	SignerStates     []string `json:"signer_states,omitempty"`
 	LastImportedAt   string   `json:"last_imported_at"`
 }
 
-func summarizeImports(policy trust.Policy, imports []model.ImportRecord, artifacts []model.ArtifactRecord) importSummary {
+func summarizeImports(root string, policy trust.Policy, imports []model.ImportRecord, artifacts []model.ArtifactRecord) importSummary {
 	out := importSummary{
 		ByMode:   map[string]int{},
 		BySource: map[string]importSourceSummary{},
 	}
+	artifactIndex := artifactIndexByCID(artifacts)
 	artifactSet := map[string]struct{}{}
 	sourceSet := map[string]struct{}{}
 	modeSet := map[string]struct{}{}
+	receiptSignerSet := map[string]struct{}{}
+	signerStateCounted := map[string]struct{}{}
 	receiptArtifacts := receiptArtifactsByImportedArtifact(artifacts)
 	for _, record := range imports {
 		out.Total++
@@ -2748,8 +2814,32 @@ func summarizeImports(policy trust.Policy, imports []model.ImportRecord, artifac
 			signerSet := map[string]struct{}{}
 			for _, receipt := range receipts {
 				signerSet[receipt.Signer] = struct{}{}
+				receiptSignerSet[receipt.Signer] = struct{}{}
 			}
 			sourceSummary.ReceiptSigners = sortedKeys(signerSet)
+		}
+		state := "unknown"
+		if artifact, ok := artifactIndex[record.ArtifactCID]; ok {
+			if match, err := resolveIdentityMatch(root, artifact.Signer, artifact.SignerKeyID); err == nil {
+				state = match.KeyState
+			}
+		}
+		if _, ok := signerStateCounted[record.ArtifactCID]; !ok {
+			signerStateCounted[record.ArtifactCID] = struct{}{}
+			switch state {
+			case "active":
+				out.ActiveSignerArtifacts++
+			case "archived":
+				out.ArchivedSignerArtifacts++
+			case "imported":
+				out.ImportedSignerArtifacts++
+			default:
+				out.UnknownSignerArtifacts++
+			}
+		}
+		if !stringSliceContains(sourceSummary.SignerStates, state) {
+			sourceSummary.SignerStates = append(sourceSummary.SignerStates, state)
+			sort.Strings(sourceSummary.SignerStates)
 		}
 		if record.ImportedAt > sourceSummary.LastImportedAt {
 			sourceSummary.LastImportedAt = record.ImportedAt
@@ -2771,6 +2861,7 @@ func summarizeImports(policy trust.Policy, imports []model.ImportRecord, artifac
 		}
 	}
 	out.ImportedArtifactsWithReceipts = len(importedWithReceipts)
+	out.ReceiptSigners = sortedKeys(receiptSignerSet)
 	out.UniqueArtifacts = len(artifactSet)
 	out.UniqueSources = len(sourceSet)
 	for mode := range modeSet {
@@ -2997,7 +3088,13 @@ func doctorArchivedIdentities(root string, summary *doctorSummary) error {
 		}
 		expected := archiveIdentityFilename(ident.Name, ident.KeyID)
 		if entry.Name() != expected {
-			addDoctorError(summary, fmt.Sprintf("archived identity %s filename mismatch: want %s", entry.Name(), expected), false, "")
+			targetPath := filepath.Join(dir, expected)
+			repairable := statFileMissing(targetPath)
+			hint := ""
+			if repairable {
+				hint = "run repair --identity-lineage to normalize archived identity filenames when the key material is still present"
+			}
+			addDoctorError(summary, fmt.Sprintf("archived identity %s filename mismatch: want %s", entry.Name(), expected), repairable, hint)
 			continue
 		}
 		if ident.PrivateKey == "" {
@@ -3022,10 +3119,41 @@ func doctorExpectedArchivedIdentities(root string, name string, summary *doctorS
 		keyID := expectedIdentityKeyID(name, i)
 		path := filepath.Join(root, "config", "identities", "archive", archiveIdentityFilename(name, keyID))
 		if statFileMissing(path) {
-			addDoctorError(summary, fmt.Sprintf("identity %s missing archived key file for %s", name, keyID), false, "")
+			repairable := false
+			hint := ""
+			if alternate, err := findArchivedIdentityPathByNameAndKey(root, name, keyID); err == nil && alternate != "" {
+				repairable = true
+				hint = "run repair --identity-lineage to normalize archived identity filenames when the key material is still present"
+			}
+			addDoctorError(summary, fmt.Sprintf("identity %s missing archived key file for %s", name, keyID), repairable, hint)
 		}
 	}
 	return nil
+}
+
+func findArchivedIdentityPathByNameAndKey(root string, name string, keyID string) (string, error) {
+	dir := filepath.Join(root, "config", "identities", "archive")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read identity archive dir %q: %w", dir, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		ident, err := readIdentityFile(path)
+		if err != nil {
+			continue
+		}
+		if ident.Name == name && ident.KeyID == keyID {
+			return path, nil
+		}
+	}
+	return "", nil
 }
 
 func doctorImportedProtocols(root string, summary *doctorSummary, importedProtocols map[string]struct{}) error {
