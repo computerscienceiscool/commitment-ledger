@@ -2,6 +2,7 @@
 
 This list is sorted by priority. TODO handles are stable proquint IDs.
 
+- [x] TODO-babad - Add make-based local workflows and demo helpers (`TODO/TODO-babad-add-make-based-local-workflows-and-demo-helpers.md`)
 - [x] TODO-babab - Harden assessment, evidence, and reporting invariants (`TODO/TODO-babab-harden-assessment-evidence-and-reporting-invariants.md`)
 - [x] TODO-karud - Freeze initial Commitment Ledger protocol docs and pCID workflow (`TODO/TODO-karud-freeze-protocol-docs-and-pcid-workflow.md`)
 - [x] TODO-pazat - Add local CAS and CID-addressed artifact retention (`TODO/TODO-pazat-local-cas-and-cid-retention.md`)

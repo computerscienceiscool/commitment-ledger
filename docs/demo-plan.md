@@ -54,6 +54,16 @@ for repo in alice-demo bob-demo dave-demo mallory-demo; do
 done
 ```
 
+Repo-native shortcut:
+
+```bash
+cd /home/jj/lab/commitment-ledger
+make demo-setup
+```
+
+That target creates the demo repos, seeds baseline TODO content, and writes
+`config/repos.demo.json`.
+
 ## TODO Shape
 
 Use proquint-style TODOs consistent with the dev-guide style:
@@ -145,7 +155,7 @@ This lets the demo show that:
 
 ## Commitment Ledger Config
 
-Populate [config/repos.json](/home/jj/lab/commitment-ledger/config/repos.json) with all four repos before the first scan. The checked-in file currently ships with an empty `repos` list so the repo does not point at any machine-specific paths by default.
+Populate [config/repos.json](/home/jj/lab/commitment-ledger/config/repos.json) with all four repos before the first scan, or use the generated `config/repos.demo.json` from `make demo-setup`. The checked-in file currently ships with an empty `repos` list so the repo does not point at any machine-specific paths by default.
 
 Example:
 
@@ -196,6 +206,7 @@ Current implementation note:
 
 - `local_path`, `branch`, `todo_file`, and `enabled` drive behavior today
 - `provider` and `url` are retained in the config shape but are not used by the local-only v0.1 scanner
+- `make demo-config` writes the same shape to `config/repos.demo.json` for the default demo root
 
 ## Scenario 1: Alice Keeps a Promise
 
@@ -204,7 +215,7 @@ Current implementation note:
 3. Run:
 
 ```bash
-go run ./cmd/commitment-ledger scan --config config/repos.json
+go run ./cmd/commitment-ledger scan --config config/repos.demo.json
 go run ./cmd/commitment-ledger commit \
   --promiser Alice \
   --repo alice-demo \
@@ -212,6 +223,13 @@ go run ./cmd/commitment-ledger commit \
   --target alice-demo/main/TODO-ravud/1 \
   --due 2026-07-01 \
   --promise "I promise to complete TODO-ravud subtask 1."
+```
+
+Equivalent make-based entry points:
+
+```bash
+make demo-scan
+make commit COMMIT_ARGS='--promiser Alice --repo alice-demo --branch main --target alice-demo/main/TODO-ravud/1 --due 2026-07-01 --promise "I promise to complete TODO-ravud subtask 1."'
 ```
 
 4. Check off the subtask in `alice-demo/TODO/TODO-ravud-ship-welcome-flow.md`.

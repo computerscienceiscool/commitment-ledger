@@ -51,6 +51,30 @@ commitment-ledger status
 commitment-ledger report --promiser JJ
 ```
 
+## Make Targets
+
+The repo includes a `Makefile` so routine local workflows do not depend on
+Codex access.
+
+Common targets:
+
+- `make help`: list supported development, CLI, and demo targets
+- `make fmt`: run `gofmt` across the repo
+- `make test`: run `go test ./...`
+- `make build`: build `bin/commitment-ledger`
+- `make check`: run formatting, tests, and a local build
+- `make cli ARGS='status'`: run arbitrary CLI commands through the standard local wrapper
+- `make scan CONFIG=config/repos.json`: scan a configured repo set
+- `make report REPORT_ARGS='--promiser Alice'`: run a filtered report
+- `make conformance VERSION=v0.1.0 SIGNER=commitment-ledger`: emit a local conformance claim
+
+Demo-oriented targets:
+
+- `make demo-setup`: create and seed demo repos under `$(HOME)/lab/commitment-ledger-demo` and write `config/repos.demo.json`
+- `make demo-scan`: scan the generated demo config
+- `make demo-status`: show the current local status summary
+- `make demo-report REPORT_ARGS='--promiser Alice'`: run a demo-oriented report
+
 ## Config Contract
 
 Each repo entry in `config/repos.json` currently supports these fields:
@@ -85,6 +109,7 @@ Observed work targets are always branch-qualified, for example
 - Ledger records stay in this repository.
 - Manual evidence must stay within the referenced commitment's repo, branch, and promised target scope.
 - Assessments may move commitments from `open` or `expired_unassessed` into a terminal outcome, but they do not overwrite already-finalized commitments.
+- `kept` is validated against the latest scanned work state; parent TODO promises require all discovered subtasks to be complete.
 - Assessment basis references must resolve to evidence artifacts for the same commitment.
 - Protocol docs under `docs/protocols/` define local pCIDs by exact document bytes.
 - Current emission stays on `commitment-promise-v1`, `implementation-conformance-v1`, `commitment-evidence-v2`, and `commitment-assessment-v2`; older frozen docs remain in-repo for historical pCID continuity.

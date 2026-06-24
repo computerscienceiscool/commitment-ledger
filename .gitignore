@@ -1,4 +1,6 @@
 .demo-video-build/
+bin/
 data/
 records/
 config/identities/
+config/repos.demo.json

@@ -312,6 +312,13 @@ func runAssess(root string, store *ledger.Store, registry protocol.Registry, now
 	if err != nil {
 		return err
 	}
+	workItems, err := store.LoadLatestWorkItems()
+	if err != nil {
+		return err
+	}
+	if err := validateAssessmentAgainstWork(current, *status, workItems); err != nil {
+		return err
+	}
 	assessmentRecord, updated, err := assessment.Create(assessments, current, *assessor, *status, resolvedBasis, *notes, now)
 	if err != nil {
 		return err
@@ -733,6 +740,49 @@ func resolveBasis(basis []string, evidenceItems []model.Evidence, commitmentID s
 		}
 	}
 	return out, nil
+}
+
+func validateAssessmentAgainstWork(current model.Commitment, status string, workItems map[string]model.WorkItem) error {
+	if status != model.StatusKept {
+		return nil
+	}
+	for _, target := range current.Targets {
+		item, ok := workItems[target]
+		if !ok {
+			return fmt.Errorf("cannot assess commitment %q as kept: unknown target %q; run scan first", current.CommitmentID, target)
+		}
+		if item.IsSubtask {
+			if item.Status != "complete" {
+				return fmt.Errorf("cannot assess commitment %q as kept: target %q is not complete", current.CommitmentID, target)
+			}
+			continue
+		}
+		if hasIncompleteSubtasks(item, workItems) {
+			return fmt.Errorf("cannot assess commitment %q as kept: target %q has incomplete subtasks", current.CommitmentID, target)
+		}
+		if !hasSubtasks(item, workItems) && item.Status != "complete" {
+			return fmt.Errorf("cannot assess commitment %q as kept: target %q is not complete", current.CommitmentID, target)
+		}
+	}
+	return nil
+}
+
+func hasSubtasks(item model.WorkItem, workItems map[string]model.WorkItem) bool {
+	for _, candidate := range workItems {
+		if candidate.Repo == item.Repo && candidate.Branch == item.Branch && candidate.ParentWork == item.WorkID {
+			return true
+		}
+	}
+	return false
+}
+
+func hasIncompleteSubtasks(item model.WorkItem, workItems map[string]model.WorkItem) bool {
+	for _, candidate := range workItems {
+		if candidate.Repo == item.Repo && candidate.Branch == item.Branch && candidate.ParentWork == item.WorkID && candidate.Status != "complete" {
+			return true
+		}
+	}
+	return false
 }
 
 type stringList []string

@@ -85,6 +85,63 @@ func TestValidateEvidenceInputRejectsMismatches(t *testing.T) {
 	}
 }
 
+func TestValidateAssessmentAgainstWorkRequiresPromisedTargetsComplete(t *testing.T) {
+	workItems := map[string]model.WorkItem{
+		"repo/main/TODO-parent": {
+			Repo:   "repo",
+			Branch: "main",
+			WorkID: "TODO-parent",
+			Status: "open",
+		},
+		"repo/main/TODO-parent/1": {
+			Repo:       "repo",
+			Branch:     "main",
+			WorkID:     "TODO-parent/1",
+			ParentWork: "TODO-parent",
+			Status:     "complete",
+			IsSubtask:  true,
+		},
+		"repo/main/TODO-parent/2": {
+			Repo:       "repo",
+			Branch:     "main",
+			WorkID:     "TODO-parent/2",
+			ParentWork: "TODO-parent",
+			Status:     "open",
+			IsSubtask:  true,
+		},
+		"repo/main/TODO-leaf": {
+			Repo:   "repo",
+			Branch: "main",
+			WorkID: "TODO-leaf",
+			Status: "complete",
+		},
+	}
+
+	err := validateAssessmentAgainstWork(model.Commitment{
+		CommitmentID: "COMMITMENT-parent",
+		Targets:      []string{"repo/main/TODO-parent"},
+	}, model.StatusKept, workItems)
+	if err == nil || !strings.Contains(err.Error(), "incomplete subtasks") {
+		t.Fatalf("parent kept validation error = %v, want incomplete subtasks", err)
+	}
+
+	err = validateAssessmentAgainstWork(model.Commitment{
+		CommitmentID: "COMMITMENT-subtask",
+		Targets:      []string{"repo/main/TODO-parent/1"},
+	}, model.StatusKept, workItems)
+	if err != nil {
+		t.Fatalf("subtask kept validation unexpectedly failed: %v", err)
+	}
+
+	err = validateAssessmentAgainstWork(model.Commitment{
+		CommitmentID: "COMMITMENT-leaf",
+		Targets:      []string{"repo/main/TODO-leaf"},
+	}, model.StatusKept, workItems)
+	if err != nil {
+		t.Fatalf("leaf kept validation unexpectedly failed: %v", err)
+	}
+}
+
 func TestLifecycleFlowUsesV2EvidenceAndAssessmentProtocols(t *testing.T) {
 	root := t.TempDir()
 	copyProtocolDocs(t, root)
@@ -206,6 +263,66 @@ func TestLifecycleFlowUsesV2EvidenceAndAssessmentProtocols(t *testing.T) {
 	})
 	if !strings.Contains(statusOut, "Kept commitments: 1") || !strings.Contains(statusOut, "Broken: 0") {
 		t.Fatalf("unexpected status output:\n%s", statusOut)
+	}
+}
+
+func TestRunAssessRejectsKeptForIncompleteParentTarget(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(root, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+
+	now := time.Date(2026, 6, 24, 10, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(root, store, registry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan: %v", err)
+	}
+	if err := runCommit(root, store, registry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete the whole TODO.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+
+	commitments, err := store.LoadLatestCommitments()
+	if err != nil {
+		t.Fatalf("LoadLatestCommitments: %v", err)
+	}
+	var current model.Commitment
+	for _, item := range commitments {
+		current = item
+	}
+
+	err = runAssess(root, store, registry, now.Add(2*time.Minute), []string{
+		"--commitment", current.CommitmentID,
+		"--assessor", "Alice",
+		"--status", model.StatusKept,
+		"--notes", "Trying to assess early.",
+	})
+	if err == nil || !strings.Contains(err.Error(), "incomplete subtasks") {
+		t.Fatalf("runAssess error = %v, want incomplete subtasks", err)
 	}
 }
 

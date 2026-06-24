@@ -39,6 +39,15 @@ The main app repo is:
 /home/jj/lab/commitment-ledger
 ```
 
+If you want repo-native helpers instead of typing every `go run` command, start
+from the app repo and use:
+
+```bash
+make help
+make demo-setup
+make demo-scan
+```
+
 ## Opening Framing
 
 What to say:
@@ -82,7 +91,14 @@ Commands:
 
 ```bash
 cd /home/jj/lab/commitment-ledger
-GOCACHE=/tmp/gocache go run ./cmd/commitment-ledger scan --config config/repos.json
+GOCACHE=/tmp/gocache go run ./cmd/commitment-ledger scan --config config/repos.demo.json
+```
+
+Equivalent helper:
+
+```bash
+cd /home/jj/lab/commitment-ledger
+make demo-scan
 ```
 
 What to say:
@@ -136,6 +152,12 @@ GOCACHE=/tmp/gocache go run ./cmd/commitment-ledger commit \
   --target alice-demo/main/TODO-ravud/1 \
   --due 2026-07-01 \
   --promise "I promise to complete TODO-ravud subtask 1."
+```
+
+Equivalent helper:
+
+```bash
+make commit COMMIT_ARGS='--promiser Alice --repo alice-demo --branch main --target alice-demo/main/TODO-ravud/1 --due 2026-07-01 --promise "I promise to complete TODO-ravud subtask 1."'
 ```
 
 What to say:
@@ -232,7 +254,7 @@ What to say:
 Commands:
 
 ```bash
-GOCACHE=/tmp/gocache go run ./cmd/commitment-ledger scan --config config/repos.json
+GOCACHE=/tmp/gocache go run ./cmd/commitment-ledger scan --config config/repos.demo.json
 grep 'todo_checked' /home/jj/lab/commitment-ledger/data/evidence.jsonl
 ```
 
@@ -282,6 +304,12 @@ Commands:
 ASSESSMENT_ID=$(tail -n 1 /home/jj/lab/commitment-ledger/data/assessments.jsonl | sed -E 's/.*"assessment_id":"([^"]+)".*/\1/')
 cat /home/jj/lab/commitment-ledger/records/assessments/$ASSESSMENT_ID.md
 GOCACHE=/tmp/gocache go run ./cmd/commitment-ledger report --promiser Alice
+```
+
+Equivalent helper:
+
+```bash
+make demo-report REPORT_ARGS='--promiser Alice'
 ```
 
 What to say:
