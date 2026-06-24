@@ -1959,6 +1959,170 @@ func TestRunIdentityBackupWritesCurrentAndArchivedKeys(t *testing.T) {
 	}
 }
 
+func TestRunIdentityRestoreRestoresCurrentAndArchivedKeys(t *testing.T) {
+	sourceRoot := t.TempDir()
+	if _, _, _, err := identity.LoadOrCreate(sourceRoot, "Alice"); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+	if err := runIdentity(sourceRoot, []string{"rotate", "--name", "Alice"}); err != nil {
+		t.Fatalf("runIdentity rotate: %v", err)
+	}
+	backupPath := filepath.Join(sourceRoot, "backups", "alice-identities.json")
+	if err := runIdentity(sourceRoot, []string{"backup", "--out", backupPath, "Alice"}); err != nil {
+		t.Fatalf("runIdentity backup: %v", err)
+	}
+
+	restoreRoot := t.TempDir()
+	out := captureStdout(t, func() error {
+		return runIdentity(restoreRoot, []string{"restore", "--in", backupPath, "Alice"})
+	})
+	if !strings.Contains(out, "Restored current identities: 1") ||
+		!strings.Contains(out, "Restored archived identities: 1") {
+		t.Fatalf("unexpected identity restore output:\n%s", out)
+	}
+	current, err := loadIdentityInfo(restoreRoot, "Alice")
+	if err != nil {
+		t.Fatalf("loadIdentityInfo restored current: %v", err)
+	}
+	if current.KeyID != "alice-ed25519-v2" {
+		t.Fatalf("restored current key id = %q, want alice-ed25519-v2", current.KeyID)
+	}
+	archived, err := loadArchivedIdentityInfos(restoreRoot, "Alice")
+	if err != nil {
+		t.Fatalf("loadArchivedIdentityInfos restored: %v", err)
+	}
+	if len(archived) != 1 || archived[0].KeyID != "alice-ed25519-v1" {
+		t.Fatalf("restored archived identities = %#v, want one v1 archived key", archived)
+	}
+}
+
+func TestRunDoctorStrictFailsOnWarnings(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	err = runDoctor(root, store, registry, []string{"--strict"})
+	if err == nil || !strings.Contains(err.Error(), "warning") {
+		t.Fatalf("runDoctor --strict error = %v, want strict warning failure", err)
+	}
+
+	jsonOut, jsonErr := captureStdoutWithError(t, func() error {
+		return runDoctor(root, store, registry, []string{"--json", "--strict"})
+	})
+	if jsonErr == nil || !strings.Contains(jsonErr.Error(), "warning") {
+		t.Fatalf("runDoctor --json --strict error = %v, want strict warning failure", jsonErr)
+	}
+	if !strings.Contains(jsonOut, "\"warnings\": [") {
+		t.Fatalf("strict doctor json output missing warnings:\n%s", jsonOut)
+	}
+}
+
+func TestVerifySupportsMultipleRotations(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(root, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+	now := time.Date(2026, 6, 25, 1, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(root, store, registry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan: %v", err)
+	}
+
+	if err := runCommit(root, store, registry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit v1: %v", err)
+	}
+	first := latestCommitment(t, store)
+	if err := runIdentity(root, []string{"rotate", "--name", "Alice"}); err != nil {
+		t.Fatalf("runIdentity rotate to v2: %v", err)
+	}
+
+	if err := runCommit(root, store, registry, now.Add(2*time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/2",
+		"--due", "2026-07-02",
+		"--promise", "I promise to complete subtask 2.",
+	}); err != nil {
+		t.Fatalf("runCommit v2: %v", err)
+	}
+	commitments, err := store.LoadLatestCommitments()
+	if err != nil {
+		t.Fatalf("LoadLatestCommitments: %v", err)
+	}
+	var second model.Commitment
+	for _, item := range commitments {
+		if item.CommitmentID != first.CommitmentID && item.SignerKeyID == "alice-ed25519-v2" {
+			second = item
+			break
+		}
+	}
+	if second.CommitmentID == "" {
+		t.Fatalf("did not find second v2 commitment in %#v", commitments)
+	}
+	if err := runIdentity(root, []string{"rotate", "--name", "Alice"}); err != nil {
+		t.Fatalf("runIdentity rotate to v3: %v", err)
+	}
+
+	historyOut := captureStdout(t, func() error {
+		return runIdentity(root, []string{"history", "Alice"})
+	})
+	for _, fragment := range []string{
+		"Current Key ID: alice-ed25519-v3",
+		"Archived Keys: 2",
+		"Archived Key: alice-ed25519-v2",
+		"Archived Key: alice-ed25519-v1",
+	} {
+		if !strings.Contains(historyOut, fragment) {
+			t.Fatalf("identity history after multiple rotations missing %q:\n%s", fragment, historyOut)
+		}
+	}
+
+	firstVerify := captureStdout(t, func() error {
+		return runVerify(root, store, registry, []string{first.CommitmentID})
+	})
+	if !strings.Contains(firstVerify, "Signer Key State: archived") ||
+		!strings.Contains(firstVerify, "alice-ed25519-v1") {
+		t.Fatalf("unexpected first verify output after multiple rotations:\n%s", firstVerify)
+	}
+
+	secondVerify := captureStdout(t, func() error {
+		return runVerify(root, store, registry, []string{second.CommitmentID})
+	})
+	if !strings.Contains(secondVerify, "Signer Key State: archived") ||
+		!strings.Contains(secondVerify, "alice-ed25519-v2") {
+		t.Fatalf("unexpected second verify output after multiple rotations:\n%s", secondVerify)
+	}
+}
+
 func TestRunRepairRestoresImportedArtifactEnvelope(t *testing.T) {
 	root := t.TempDir()
 	copyProtocolDocs(t, root)

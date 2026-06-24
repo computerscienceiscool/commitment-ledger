@@ -967,6 +967,7 @@ func runDoctor(root string, store *ledger.Store, registry protocol.Registry, arg
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	repairableOnly := fs.Bool("repairable", false, "show repairable findings and hints")
+	strict := fs.Bool("strict", false, "treat warnings as failures")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -984,6 +985,9 @@ func runDoctor(root string, store *ledger.Store, registry protocol.Registry, arg
 		}
 		if len(report.Errors) > 0 {
 			return fmt.Errorf("doctor found %d error(s)", len(report.Errors))
+		}
+		if *strict && len(report.Warnings) > 0 {
+			return fmt.Errorf("doctor found %d warning(s) in strict mode", len(report.Warnings))
 		}
 		return nil
 	}
@@ -1013,6 +1017,9 @@ func runDoctor(root string, store *ledger.Store, registry protocol.Registry, arg
 		if len(report.Errors) > 0 {
 			return fmt.Errorf("doctor found %d error(s)", len(report.Errors))
 		}
+		if *strict && len(report.Warnings) > 0 {
+			return fmt.Errorf("doctor found %d warning(s) in strict mode", len(report.Warnings))
+		}
 		return nil
 	}
 	fmt.Printf("Artifacts indexed: %d\n", report.Artifacts)
@@ -1037,6 +1044,9 @@ func runDoctor(root string, store *ledger.Store, registry protocol.Registry, arg
 	}
 	if len(report.Errors) > 0 {
 		return fmt.Errorf("doctor found %d error(s)", len(report.Errors))
+	}
+	if *strict && len(report.Warnings) > 0 {
+		return fmt.Errorf("doctor found %d warning(s) in strict mode", len(report.Warnings))
 	}
 	return nil
 }
@@ -1184,6 +1194,11 @@ type identityBackupHistory struct {
 	Archived []identity.Identity `json:"archived,omitempty"`
 }
 
+type identityRestoreResult struct {
+	RestoredCurrent  int `json:"restored_current"`
+	RestoredArchived int `json:"restored_archived"`
+}
+
 type repairApplied struct {
 	Records         bool `json:"records"`
 	ProtocolCAS     bool `json:"protocol_cas"`
@@ -1211,7 +1226,7 @@ type identityMatch struct {
 
 func runIdentity(root string, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("identity requires a subcommand: list, show, history, backup, rotate")
+		return fmt.Errorf("identity requires a subcommand: list, show, history, backup, restore, rotate")
 	}
 	switch args[0] {
 	case "list":
@@ -1222,6 +1237,8 @@ func runIdentity(root string, args []string) error {
 		return runIdentityHistory(root, args[1:])
 	case "backup":
 		return runIdentityBackup(root, args[1:])
+	case "restore":
+		return runIdentityRestore(root, args[1:])
 	case "rotate":
 		return runIdentityRotate(root, args[1:])
 	default:
@@ -1333,6 +1350,32 @@ func runIdentityBackup(root string, args []string) error {
 	}
 	fmt.Printf("Wrote identity backup: %s\n", *outPath)
 	fmt.Printf("Identities backed up: %d\n", len(backup.Identities))
+	return nil
+}
+
+func runIdentityRestore(root string, args []string) error {
+	fs := flag.NewFlagSet("identity restore", flag.ContinueOnError)
+	inPath := fs.String("in", "", "read backup json from this path")
+	jsonOut := fs.Bool("json", false, "emit JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *inPath == "" {
+		return fmt.Errorf("identity restore requires --in")
+	}
+	backup, err := loadIdentityBackupFile(*inPath)
+	if err != nil {
+		return err
+	}
+	result, err := restoreIdentityBackup(root, backup, fs.Args())
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSON(result)
+	}
+	fmt.Printf("Restored current identities: %d\n", result.RestoredCurrent)
+	fmt.Printf("Restored archived identities: %d\n", result.RestoredArchived)
 	return nil
 }
 
@@ -1486,6 +1529,23 @@ func buildIdentityBackup(root string, names []string) (identityBackup, error) {
 	return out, nil
 }
 
+func loadIdentityBackupFile(path string) (identityBackup, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return identityBackup{}, fmt.Errorf("read identity backup %q: %w", path, err)
+	}
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec.DisallowUnknownFields()
+	var backup identityBackup
+	if err := dec.Decode(&backup); err != nil {
+		return identityBackup{}, fmt.Errorf("parse identity backup %q: %w", path, err)
+	}
+	if len(backup.Identities) == 0 {
+		return identityBackup{}, fmt.Errorf("identity backup %q contains no identities", path)
+	}
+	return backup, nil
+}
+
 func loadIdentityBackupHistory(root string, name string) (identityBackupHistory, error) {
 	history := identityBackupHistory{Name: name}
 	primaryPath := filepath.Join(root, identityPathForName(name))
@@ -1509,6 +1569,69 @@ func loadIdentityBackupHistory(root string, name string) (identityBackupHistory,
 		return identityBackupHistory{}, fmt.Errorf("identity %q not found", name)
 	}
 	return history, nil
+}
+
+func restoreIdentityBackup(root string, backup identityBackup, names []string) (identityRestoreResult, error) {
+	selected := map[string]struct{}{}
+	for _, name := range names {
+		selected[name] = struct{}{}
+	}
+	result := identityRestoreResult{}
+	for _, item := range backup.Identities {
+		if len(selected) > 0 {
+			if _, ok := selected[item.Name]; !ok {
+				continue
+			}
+		}
+		if item.Name == "" {
+			return identityRestoreResult{}, fmt.Errorf("identity backup contains unnamed entry")
+		}
+		if item.Current == nil && len(item.Archived) == 0 {
+			return identityRestoreResult{}, fmt.Errorf("identity backup entry %q has no current or archived identities", item.Name)
+		}
+		if item.Current != nil {
+			if err := writeIdentityFileIfCompatible(filepath.Join(root, identityPathForName(item.Name)), *item.Current); err != nil {
+				return identityRestoreResult{}, err
+			}
+			result.RestoredCurrent++
+		}
+		for _, archived := range item.Archived {
+			path := filepath.Join(root, "config", "identities", "archive", archiveIdentityFilename(item.Name, archived.KeyID))
+			if err := writeIdentityFileIfCompatible(path, archived); err != nil {
+				return identityRestoreResult{}, err
+			}
+			result.RestoredArchived++
+		}
+	}
+	if len(selected) > 0 && result.RestoredCurrent == 0 && result.RestoredArchived == 0 {
+		return identityRestoreResult{}, fmt.Errorf("identity backup did not contain requested names")
+	}
+	return result, nil
+}
+
+func writeIdentityFileIfCompatible(path string, ident identity.Identity) error {
+	if ident.Name == "" || ident.KeyID == "" || ident.PublicKey == "" {
+		return fmt.Errorf("identity %q is incomplete", ident.Name)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir identity dir for %q: %w", path, err)
+	}
+	payload, err := json.MarshalIndent(ident, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal identity %q: %w", ident.Name, err)
+	}
+	if existing, err := os.ReadFile(path); err == nil {
+		if string(existing) != string(payload) {
+			return fmt.Errorf("identity restore conflict at %s", path)
+		}
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read identity %q: %w", path, err)
+	}
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		return fmt.Errorf("write identity %q: %w", path, err)
+	}
+	return nil
 }
 
 func listIdentityDir(root string, dir string, source string) ([]identityInfo, error) {

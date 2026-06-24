@@ -358,6 +358,7 @@ Bundle files are also parsed strictly:
 go run ./cmd/commitment-ledger doctor
 go run ./cmd/commitment-ledger doctor --json
 go run ./cmd/commitment-ledger doctor --repairable
+go run ./cmd/commitment-ledger doctor --strict
 ```
 
 `doctor` checks:
@@ -375,6 +376,9 @@ Use `--repairable` when you want the current findings split into:
 
 - issues the existing `repair` command may be able to address
 - issues that still need operator investigation or manual recovery
+
+Use `--strict` when warnings such as missing human-facing conformance files
+should fail CI or audit runs instead of remaining informational.
 
 ### `repair`
 
@@ -409,6 +413,7 @@ go run ./cmd/commitment-ledger identity list --json
 go run ./cmd/commitment-ledger identity show Alice
 go run ./cmd/commitment-ledger identity history Alice --json
 go run ./cmd/commitment-ledger identity backup --out /tmp/alice-identities.json Alice
+go run ./cmd/commitment-ledger identity restore --in /tmp/alice-identities.json Alice
 go run ./cmd/commitment-ledger identity rotate --name Alice
 ```
 
@@ -420,6 +425,8 @@ go run ./cmd/commitment-ledger identity rotate --name Alice
   one signer name
 - `backup` exports current plus archived local private identity material for one
   signer or for all local primary signers when no names are given
+- `restore` restores current and archived local private identity material from a
+  backup file when those identities do not conflict with different local keys
 - `rotate` archives the old private key file under `config/identities/archive/`
   and writes a new keypair to the primary identity path
 
@@ -503,6 +510,8 @@ Recommended recovery flow:
 3. Run `make repair` if records, built-in protocol CAS objects, or imported artifact envelopes are missing.
 4. Run `make status` and `make status STATUS_ARGS='--exchange'`.
 5. Use `inspect` or `verify` on a few representative artifacts before resuming normal operation.
+
+For a shorter command-oriented matrix, see `docs/recovery-checklist.md`.
 
 ## Troubleshooting
 
