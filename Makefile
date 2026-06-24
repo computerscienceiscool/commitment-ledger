@@ -13,6 +13,7 @@ RUN := GOCACHE=$(GOCACHE) $(GO) run ./cmd/commitment-ledger
 VERSION ?= v0.1.0
 SIGNER ?= commitment-ledger
 ARGS ?=
+STATUS_ARGS ?=
 REPORT_ARGS ?=
 COMMIT_ARGS ?=
 EVIDENCE_ARGS ?=
@@ -41,8 +42,9 @@ help:
 	@echo "CLI wrappers:"
 	@echo "  make cli ARGS='status'"
 	@echo "  make scan CONFIG=config/repos.json"
-	@echo "  make status"
+	@echo "  make status STATUS_ARGS='--exchange'"
 	@echo "  make report REPORT_ARGS='--promiser Alice'"
+	@echo "  make report REPORT_ARGS='--imports'"
 	@echo "  make inspect INSPECT_ARGS='COMMITMENT-...'"
 	@echo "  make verify VERIFY_ARGS='COMMITMENT-...'"
 	@echo "  make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'"
@@ -85,7 +87,7 @@ scan:
 	@$(RUN) scan --config $(CONFIG)
 
 status:
-	@$(RUN) status
+	@$(RUN) status $(STATUS_ARGS)
 
 report:
 	@$(RUN) report $(REPORT_ARGS)

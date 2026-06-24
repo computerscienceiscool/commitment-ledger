@@ -20,7 +20,9 @@ make help
 make test
 make scan CONFIG=config/repos.json
 make status
+make status STATUS_ARGS='--exchange'
 make report REPORT_ARGS='--promiser Alice'
+make report REPORT_ARGS='--imports'
 make inspect INSPECT_ARGS='COMMITMENT-...'
 make verify VERIFY_ARGS='COMMITMENT-...'
 make conformance VERSION=v0.1.0 SIGNER=commitment-ledger
@@ -112,6 +114,7 @@ Important current rules:
 
 ```bash
 go run ./cmd/commitment-ledger status
+go run ./cmd/commitment-ledger status --exchange
 ```
 
 Use this for repo-level operational summary:
@@ -121,16 +124,28 @@ Use this for repo-level operational summary:
 - active commitments
 - terminal commitment outcomes by repo/branch
 
+Use `status --exchange` for import and exchange summary:
+
+- total imports
+- unique imported artifacts and source paths
+- support installation count
+- trusted vs untrusted imports under the current trust policy
+- per-mode counts such as `import` vs `receive`
+
 ### `report`
 
 ```bash
 go run ./cmd/commitment-ledger report --promiser Alice
 go run ./cmd/commitment-ledger report --repo alice-demo --branch main
 go run ./cmd/commitment-ledger report --work alice-demo/main/TODO-ravud
+go run ./cmd/commitment-ledger report --imports
 ```
 
 Use `report` when you want filtered summaries by promiser, repo, or work
 target.
+
+Use `report --imports` when you want imported-artifact summaries grouped by
+source path and annotated with the current trust-policy result.
 
 ### `inspect`
 
@@ -179,7 +194,22 @@ go run ./cmd/commitment-ledger verify bafy...
 
 It also tells you whether the artifact's `protocol_pcid` matches a local frozen
 protocol doc, whether the identity/protocol support came from built-in or
-imported state, and the latest recorded import provenance when applicable.
+imported state, the latest recorded import provenance when applicable, and the
+current local trust-policy judgment for signer, protocol, and import source.
+
+### `config/trust-policy.json`
+
+Optional local trust-policy file used by `verify`, `status --exchange`, and
+`report --imports`.
+
+Current fields:
+
+- `trust_built_in_signers`
+- `trust_built_in_protocols`
+- `trusted_signers`
+- `trusted_protocol_pcids`
+- `trusted_import_modes`
+- `trusted_import_path_prefixes`
 
 ### `conformance`
 
@@ -286,6 +316,12 @@ Evidence does not currently get its own standalone Markdown record.
 
 Imported public signer material used by `verify` when an artifact signer is not
 present in the primary local identity store.
+
+### `config/trust-policy.json`
+
+Optional local trust-policy file controlling whether built-in or imported
+signers, protocols, and import sources are treated as trusted by `verify`,
+`status --exchange`, and `report --imports`.
 
 ### `docs/protocols/`
 

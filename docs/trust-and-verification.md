@@ -53,6 +53,7 @@ Today, Commitment Ledger is local-first:
 - protocol docs live under `docs/protocols/`
 - imported protocol docs can live under `data/imported-protocols/`
 - import and receive provenance lives under `data/imports.jsonl`
+- optional trust policy lives under `config/trust-policy.json`
 - conformance claims are local statements by this implementation
 
 That means verification is strongest when you are checking artifacts emitted by
@@ -60,6 +61,23 @@ this same local repo state and signer store. Imported bundles can extend what
 the repo can verify locally, but they do not by themselves create shared trust.
 The repo can now at least tell you where imported support came from inside this
 local ledger state; it still cannot decide whether that source deserves trust.
+
+## Trust Policy
+
+When `config/trust-policy.json` exists, the repo applies a local policy layer
+on top of cryptographic verification.
+
+Current fields:
+
+- `trust_built_in_signers`
+- `trust_built_in_protocols`
+- `trusted_signers`
+- `trusted_protocol_pcids`
+- `trusted_import_modes`
+- `trusted_import_path_prefixes`
+
+That policy does not change artifact bytes or protocol meaning. It only changes
+how this local operator classifies signer, protocol, and import-source trust.
 
 ## Practical Reading
 
@@ -72,6 +90,8 @@ If `verify` succeeds, the useful interpretation is:
   present
 - the repo can show whether that support was built-in or imported and when the
   artifact was imported into this local ledger state
+- if a trust policy exists, the repo can also say whether this local policy
+  treats the signer, protocol, and import source as trusted
 
 If `verify` fails because of signer mismatch, missing signer identity, or CID
 mismatch, treat that as a real integrity problem until explained.

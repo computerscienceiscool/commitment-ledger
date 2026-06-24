@@ -49,7 +49,9 @@ commitment-ledger assess --commitment COMMITMENT-... --assessor JJ --status kept
 commitment-ledger conformance --signer commitment-ledger --version v0.1.0 --write-changelog
 commitment-ledger expire
 commitment-ledger status
+commitment-ledger status --exchange
 commitment-ledger report --promiser JJ
+commitment-ledger report --imports
 commitment-ledger inspect COMMITMENT-...
 commitment-ledger verify COMMITMENT-...
 commitment-ledger export --out /tmp/bundle.json COMMITMENT-...
@@ -72,7 +74,9 @@ Common targets:
 - `make check`: run formatting, tests, and a local build
 - `make cli ARGS='status'`: run arbitrary CLI commands through the standard local wrapper
 - `make scan CONFIG=config/repos.json`: scan a configured repo set
+- `make status STATUS_ARGS='--exchange'`: run the default repo summary or the exchange/import summary
 - `make report REPORT_ARGS='--promiser Alice'`: run a filtered report
+- `make report REPORT_ARGS='--imports'`: summarize imported artifacts by source path and trust result
 - `make inspect INSPECT_ARGS='COMMITMENT-...'`: inspect a commitment ID, evidence ID, assessment ID, or artifact CID
 - `make verify VERIFY_ARGS='COMMITMENT-...'`: verify a commitment ID, evidence ID, assessment ID, or artifact CID against local CAS bytes and signer material
 - `make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'`: export an artifact bundle with related projection rows and support material
@@ -101,6 +105,20 @@ Each repo entry in `config/repos.json` currently supports these fields:
 
 The JSON shape also includes `provider` and `url`, but v0.1 is local-only and
 does not use them yet.
+
+## Trust Policy
+
+If `config/trust-policy.json` exists, `verify`, `status --exchange`, and
+`report --imports` use it for local trust evaluation.
+
+Current supported fields:
+
+- `trust_built_in_signers`: whether identities under `config/identities/` are trusted by default
+- `trust_built_in_protocols`: whether built-in frozen docs under `docs/protocols/` are trusted by default
+- `trusted_signers`: signer names trusted even when they come from imported support
+- `trusted_protocol_pcids`: protocol pCIDs trusted even when they come from imported support
+- `trusted_import_modes`: allowed import modes such as `import` or `receive`
+- `trusted_import_path_prefixes`: path prefixes whose imported bundles are trusted locally
 
 ## TODO Parser Contract
 
@@ -133,7 +151,7 @@ Observed work targets are always branch-qualified, for example
 - JSONL and Markdown files are projections over those raw artifacts.
 - Repo status summaries surface kept and non-kept terminal outcomes separately.
 - `inspect` resolves commitment IDs, evidence IDs, assessment IDs, and artifact CIDs back to their local artifact metadata, frozen protocol docs, matching `CHANGELOG.md` conformance entries, and latest import provenance when present.
-- `verify` checks local CAS bytes, envelope/payload/proof CIDs, the signature, matching local signer identity material, and whether the signer/protocol support came from built-in local state or imported support.
+- `verify` checks local CAS bytes, envelope/payload/proof CIDs, the signature, matching local signer identity material, and optional local trust policy over signer, protocol, and import source.
 - `export` writes a portable bundle containing the artifact index row, envelope bytes, related projection rows, and available signer/protocol support material.
 - `import` loads that bundle back into local CAS and projections, can install bundled signer/protocol support material for later `inspect` and `verify` use, and records import provenance in `data/imports.jsonl`.
 - `send` and `receive` add a local filesystem inbox/outbox exchange path on top of the bundle format; they are still not network transport.

@@ -25,7 +25,7 @@ That means two different kinds of incompleteness need to stay separate:
 
 - No peer-to-peer network transport yet.
 - No shared remote import protocol yet.
-- No richer local trust-accounting view yet.
+- No richer shared trust-accounting view yet beyond local policy checks.
 - No explicit migration story from these local protocol docs to any future
   upstream frozen specs yet.
 
@@ -33,6 +33,10 @@ Current local exchange support is bundle-based plus filesystem inbox/outbox
 helpers: operators can `export`, `import`, `send`, and `receive` artifacts plus
 support material, but there is still no shared network transport or peer
 protocol layered over that.
+
+Current local trust support is policy-based only: `verify`, `status --exchange`,
+and `report --imports` can apply a local `config/trust-policy.json`, but that is
+still operator-local trust classification rather than shared cross-peer trust.
 
 ## Conformance Claim Path
 

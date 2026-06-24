@@ -332,14 +332,14 @@ func TestLifecycleFlowUsesV2EvidenceAndAssessmentProtocols(t *testing.T) {
 	}
 
 	reportOut := captureStdout(t, func() error {
-		return runReport(store, []string{"--promiser", "Alice"})
+		return runReport(root, store, []string{"--promiser", "Alice"})
 	})
 	if !strings.Contains(reportOut, "Promiser: Alice") || !strings.Contains(reportOut, "Kept: 1") {
 		t.Fatalf("unexpected report output:\n%s", reportOut)
 	}
 
 	statusOut := captureStdout(t, func() error {
-		return runStatus(store)
+		return runStatus(root, store, nil)
 	})
 	if !strings.Contains(statusOut, "Kept commitments: 1") || !strings.Contains(statusOut, "Broken: 0") {
 		t.Fatalf("unexpected status output:\n%s", statusOut)
@@ -824,7 +824,7 @@ func TestRunReportPromiserShowsAllTerminalOutcomes(t *testing.T) {
 	}
 
 	out := captureStdout(t, func() error {
-		return runReport(store, []string{"--promiser", "Alice"})
+		return runReport(t.TempDir(), store, []string{"--promiser", "Alice"})
 	})
 	for _, fragment := range []string{
 		"Promiser: Alice",
@@ -1006,6 +1006,122 @@ func TestRunSendAndReceiveRoundTrip(t *testing.T) {
 	if !strings.Contains(verifyOut, "Kind: commitment_promise") ||
 		!strings.Contains(verifyOut, "Latest Import Mode: receive") {
 		t.Fatalf("unexpected receive verify output:\n%s", verifyOut)
+	}
+}
+
+func TestRunVerifyAppliesTrustPolicy(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(root, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+
+	now := time.Date(2026, 6, 24, 21, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(root, store, registry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan: %v", err)
+	}
+	if err := runCommit(root, store, registry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+	commitment := latestCommitment(t, store)
+
+	writeTrustPolicy(t, root, map[string]any{
+		"trust_built_in_signers":   false,
+		"trust_built_in_protocols": false,
+		"trusted_signers":          []string{"Alice"},
+		"trusted_protocol_pcids":   []string{commitment.ProtocolPCID},
+	})
+
+	out := captureStdout(t, func() error {
+		return runVerify(root, store, registry, []string{commitment.CommitmentID})
+	})
+	for _, fragment := range []string{
+		"Signer Trusted: yes (listed in trust policy)",
+		"Protocol Trusted: yes (listed in trust policy)",
+		"Import Source Trusted: n/a (no import provenance for this artifact)",
+		"Overall Trust: yes",
+	} {
+		if !strings.Contains(out, fragment) {
+			t.Fatalf("verify output missing %q:\n%s", fragment, out)
+		}
+	}
+}
+
+func TestRunStatusExchangeAndReportImports(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	inbox := filepath.Join(root, "peer-inbox")
+	bundlePath := filepath.Join(inbox, "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+	writeTrustPolicy(t, root, map[string]any{
+		"trust_built_in_signers":       true,
+		"trust_built_in_protocols":     true,
+		"trusted_signers":              []string{"Mallory"},
+		"trusted_protocol_pcids":       []string{bundle.Artifact.ProtocolPCID},
+		"trusted_import_modes":         []string{"receive"},
+		"trusted_import_path_prefixes": []string{inbox},
+	})
+
+	if err := runReceive(root, store, registry, time.Date(2026, 6, 24, 21, 30, 0, 0, time.FixedZone("PDT", -7*3600)), []string{"--inbox", inbox}); err != nil {
+		t.Fatalf("runReceive: %v", err)
+	}
+
+	statusOut := captureStdout(t, func() error {
+		return runStatus(root, store, []string{"--exchange"})
+	})
+	for _, fragment := range []string{
+		"Total imports: 1",
+		"Unique imported artifacts: 1",
+		"Trusted imports: 1",
+		"Mode receive: 1",
+	} {
+		if !strings.Contains(statusOut, fragment) {
+			t.Fatalf("status --exchange output missing %q:\n%s", fragment, statusOut)
+		}
+	}
+
+	reportOut := captureStdout(t, func() error {
+		return runReport(root, store, []string{"--imports"})
+	})
+	for _, fragment := range []string{
+		"Source: " + bundlePath,
+		"Imports: 1",
+		"Trusted: yes",
+		"Modes: receive",
+	} {
+		if !strings.Contains(reportOut, fragment) {
+			t.Fatalf("report --imports output missing %q:\n%s", fragment, reportOut)
+		}
 	}
 }
 
@@ -1201,6 +1317,21 @@ func writeBundle(t *testing.T, path string, bundle exchange.Bundle) {
 	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("write bundle: %v", err)
+	}
+}
+
+func writeTrustPolicy(t *testing.T, root string, payload map[string]any) {
+	t.Helper()
+	path := filepath.Join(root, "config", "trust-policy.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir trust policy dir: %v", err)
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal trust policy: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write trust policy: %v", err)
 	}
 }
 

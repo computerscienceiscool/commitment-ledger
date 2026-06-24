@@ -25,6 +25,7 @@ import (
 	"commitment-ledger/internal/protocol"
 	"commitment-ledger/internal/report"
 	"commitment-ledger/internal/todo"
+	"commitment-ledger/internal/trust"
 )
 
 func main() {
@@ -50,7 +51,7 @@ func main() {
 	case "scan":
 		err = runScan(root, store, registry, now, os.Args[2:])
 	case "status":
-		err = runStatus(store)
+		err = runStatus(root, store, os.Args[2:])
 	case "commit":
 		err = runCommit(root, store, registry, now, os.Args[2:])
 	case "evidence":
@@ -62,7 +63,7 @@ func main() {
 	case "expire":
 		err = runExpire(store, now)
 	case "report":
-		err = runReport(store, os.Args[2:])
+		err = runReport(root, store, os.Args[2:])
 	case "inspect":
 		err = runInspect(root, store, registry, os.Args[2:])
 	case "verify":
@@ -213,7 +214,24 @@ func removedWorkItems(repo string, branch string, commit string, now time.Time, 
 	return removed
 }
 
-func runStatus(store *ledger.Store) error {
+func runStatus(root string, store *ledger.Store, args []string) error {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	exchangeOnly := fs.Bool("exchange", false, "show exchange and import summary instead of repo work summary")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	imports, err := store.LoadImports()
+	if err != nil {
+		return err
+	}
+	if *exchangeOnly {
+		policy, err := trust.Load(root)
+		if err != nil {
+			return err
+		}
+		printExchangeStatus(policy, imports)
+		return nil
+	}
 	workItems, err := store.LoadLatestWorkItems()
 	if err != nil {
 		return err
@@ -464,14 +482,27 @@ func commitmentCoversTarget(current model.Commitment, target string) bool {
 	return false
 }
 
-func runReport(store *ledger.Store, args []string) error {
+func runReport(root string, store *ledger.Store, args []string) error {
 	fs := flag.NewFlagSet("report", flag.ContinueOnError)
 	repoName := fs.String("repo", "", "repo name")
 	branch := fs.String("branch", "", "branch")
 	promiser := fs.String("promiser", "", "promiser")
 	workTarget := fs.String("work", "", "work target")
+	importsOnly := fs.Bool("imports", false, "show import and exchange summary")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *importsOnly {
+		imports, err := store.LoadImports()
+		if err != nil {
+			return err
+		}
+		policy, err := trust.Load(root)
+		if err != nil {
+			return err
+		}
+		printImportReport(policy, imports)
+		return nil
 	}
 
 	workItems, err := store.LoadLatestWorkItems()
@@ -622,6 +653,10 @@ func runVerify(root string, store *ledger.Store, registry protocol.Registry, arg
 	if err != nil {
 		return err
 	}
+	policy, err := trust.Load(root)
+	if err != nil {
+		return err
+	}
 
 	artifact, err := resolveArtifactReference(ref, artifacts, commitments, evidenceItems, assessments)
 	if err != nil {
@@ -667,7 +702,7 @@ func runVerify(root string, store *ledger.Store, registry protocol.Registry, arg
 		return err
 	}
 
-	printVerifyResult(root, registry, artifact, decoded, ident, latestImportForArtifact(imports, artifact.ArtifactCID))
+	printVerifyResult(root, registry, artifact, decoded, ident, latestImportForArtifact(imports, artifact.ArtifactCID), policy)
 	return nil
 }
 
@@ -993,13 +1028,14 @@ type inspectView struct {
 	Details            []string
 	ConformanceEntries []changelog.Entry
 	LatestImport       *model.ImportRecord
+	RelatedImports     []model.ImportRecord
 }
 
 func inspectReference(root string, registry protocol.Registry, ref string, artifacts []model.ArtifactRecord, commitments map[string]model.Commitment, evidenceItems []model.Evidence, assessments []model.Assessment, imports []model.ImportRecord) (inspectView, error) {
 	artifactByCID := artifactIndexByCID(artifacts)
 
 	if item, ok := commitments[ref]; ok {
-		return buildCommitmentInspectView(root, registry, ref, item, artifactByCID[item.ArtifactCID], imports), nil
+		return buildCommitmentInspectView(root, registry, ref, item, artifactByCID[item.ArtifactCID], commitments, evidenceItems, assessments, imports), nil
 	}
 	for _, item := range evidenceItems {
 		if item.EvidenceID == ref {
@@ -1015,7 +1051,7 @@ func inspectReference(root string, registry protocol.Registry, ref string, artif
 		switch artifact.Kind {
 		case "commitment_promise":
 			if item, ok := commitments[artifact.RelatedID]; ok {
-				return buildCommitmentInspectView(root, registry, ref, item, artifact, imports), nil
+				return buildCommitmentInspectView(root, registry, ref, item, artifact, commitments, evidenceItems, assessments, imports), nil
 			}
 		case "commitment_evidence":
 			for _, item := range evidenceItems {
@@ -1321,7 +1357,28 @@ func latestImportForArtifact(items []model.ImportRecord, artifactCID string) *mo
 	return nil
 }
 
-func buildCommitmentInspectView(root string, registry protocol.Registry, ref string, item model.Commitment, artifact model.ArtifactRecord, imports []model.ImportRecord) inspectView {
+func relatedImportsForCommitment(commitmentID string, evidenceItems []model.Evidence, assessments []model.Assessment, imports []model.ImportRecord) []model.ImportRecord {
+	artifactSet := map[string]struct{}{}
+	for _, item := range evidenceItems {
+		if item.CommitmentID == commitmentID && item.ArtifactCID != "" {
+			artifactSet[item.ArtifactCID] = struct{}{}
+		}
+	}
+	for _, item := range assessments {
+		if item.CommitmentID == commitmentID && item.ArtifactCID != "" {
+			artifactSet[item.ArtifactCID] = struct{}{}
+		}
+	}
+	out := []model.ImportRecord{}
+	for _, record := range imports {
+		if _, ok := artifactSet[record.ArtifactCID]; ok {
+			out = append(out, record)
+		}
+	}
+	return out
+}
+
+func buildCommitmentInspectView(root string, registry protocol.Registry, ref string, item model.Commitment, artifact model.ArtifactRecord, commitments map[string]model.Commitment, evidenceItems []model.Evidence, assessments []model.Assessment, imports []model.ImportRecord) inspectView {
 	view := buildArtifactInspectView(root, registry, ref, artifact, imports)
 	view.Kind = "commitment_promise"
 	view.RelatedID = item.CommitmentID
@@ -1338,6 +1395,7 @@ func buildCommitmentInspectView(root string, registry protocol.Registry, ref str
 	if view.ProtocolPCID == "" {
 		view.ProtocolPCID = item.ProtocolPCID
 	}
+	view.RelatedImports = relatedImportsForCommitment(item.CommitmentID, evidenceItems, assessments, imports)
 	return enrichInspectView(root, registry, view)
 }
 
@@ -1448,6 +1506,12 @@ func printInspectView(view inspectView) {
 		fmt.Printf("Latest Import At: %s\n", view.LatestImport.ImportedAt)
 		fmt.Printf("Import Support Installed: %s\n", yesNo(view.LatestImport.SupportInstalled))
 	}
+	if len(view.RelatedImports) > 0 {
+		fmt.Printf("Related Imported Artifacts: %d\n", len(view.RelatedImports))
+		for _, record := range view.RelatedImports {
+			fmt.Printf("Related Import: %s via %s from %s\n", emptyFallback(record.RelatedID, record.ArtifactCID), record.Mode, record.SourcePath)
+		}
+	}
 	if len(view.ConformanceEntries) > 0 {
 		for _, entry := range view.ConformanceEntries {
 			fmt.Printf("Conformance Claim: %s (scope=%s, breaking-change=%s)\n", entry.Claim, entry.Scope, entry.BreakingChange)
@@ -1468,9 +1532,10 @@ func emptyFallback(value string, fallback string) string {
 	return value
 }
 
-func printVerifyResult(root string, registry protocol.Registry, artifact model.ArtifactRecord, decoded grid.DecodedArtifact, ident identity.Identity, latestImport *model.ImportRecord) {
+func printVerifyResult(root string, registry protocol.Registry, artifact model.ArtifactRecord, decoded grid.DecodedArtifact, ident identity.Identity, latestImport *model.ImportRecord, policy trust.Policy) {
 	location := resolveProtocolLocation(root, registry, decoded.ProtocolPCID)
 	identityLocation := resolveIdentityLocation(root, decoded.Proof.Signer)
+	evaluation := trust.Evaluate(policy, decoded.Proof.Signer, identityLocation.Matched && !identityLocation.Imported, decoded.ProtocolPCID, location.Matched && !location.Imported, latestImport)
 	fmt.Printf("Reference: %s\n", emptyFallback(artifact.RelatedID, artifact.ArtifactCID))
 	fmt.Printf("Kind: %s\n", emptyFallback(artifact.Kind, "(unknown)"))
 	fmt.Printf("Artifact CID: %s\n", artifact.ArtifactCID)
@@ -1503,6 +1568,16 @@ func printVerifyResult(root string, registry protocol.Registry, artifact model.A
 		fmt.Printf("Latest Import At: %s\n", latestImport.ImportedAt)
 		fmt.Printf("Import Support Installed: %s\n", yesNo(latestImport.SupportInstalled))
 	}
+	fmt.Printf("Trust Policy File: %s\n", policy.Path)
+	fmt.Printf("Trust Policy Loaded: %s\n", yesNo(policy.Found))
+	fmt.Printf("Signer Trusted: %s (%s)\n", yesNo(evaluation.SignerTrusted), evaluation.SignerReason)
+	fmt.Printf("Protocol Trusted: %s (%s)\n", yesNo(evaluation.ProtocolTrusted), evaluation.ProtocolReason)
+	if evaluation.ImportApplies {
+		fmt.Printf("Import Source Trusted: %s (%s)\n", yesNo(evaluation.ImportTrusted), evaluation.ImportReason)
+	} else {
+		fmt.Printf("Import Source Trusted: n/a (%s)\n", evaluation.ImportReason)
+	}
+	fmt.Printf("Overall Trust: %s\n", yesNo(evaluation.OverallTrusted))
 	_ = ident
 }
 
@@ -1532,6 +1607,113 @@ func yesNo(value bool) string {
 		return "yes"
 	}
 	return "no"
+}
+
+func printExchangeStatus(policy trust.Policy, imports []model.ImportRecord) {
+	summary := summarizeImports(policy, imports)
+	fmt.Printf("Total imports: %d\n", summary.Total)
+	fmt.Printf("Unique imported artifacts: %d\n", summary.UniqueArtifacts)
+	fmt.Printf("Unique import sources: %d\n", summary.UniqueSources)
+	fmt.Printf("Support installed: %d\n", summary.SupportInstalled)
+	fmt.Printf("Trusted imports: %d\n", summary.Trusted)
+	fmt.Printf("Untrusted imports: %d\n", summary.Untrusted)
+	for _, mode := range summary.Modes {
+		fmt.Printf("Mode %s: %d\n", mode, summary.ByMode[mode])
+	}
+}
+
+func printImportReport(policy trust.Policy, imports []model.ImportRecord) {
+	summary := summarizeImports(policy, imports)
+	fmt.Printf("Total imports: %d\n", summary.Total)
+	for _, source := range summary.Sources {
+		item := summary.BySource[source]
+		fmt.Printf("Source: %s\n", source)
+		fmt.Printf("Imports: %d\n", item.Count)
+		fmt.Printf("Trusted: %s\n", yesNo(item.Trusted))
+		fmt.Printf("Modes: %s\n", strings.Join(item.Modes, ", "))
+		fmt.Printf("Last Imported At: %s\n", item.LastImportedAt)
+	}
+}
+
+type importSummary struct {
+	Total            int
+	UniqueArtifacts  int
+	UniqueSources    int
+	SupportInstalled int
+	Trusted          int
+	Untrusted        int
+	ByMode           map[string]int
+	Modes            []string
+	BySource         map[string]importSourceSummary
+	Sources          []string
+}
+
+type importSourceSummary struct {
+	Count          int
+	Trusted        bool
+	Modes          []string
+	LastImportedAt string
+}
+
+func summarizeImports(policy trust.Policy, imports []model.ImportRecord) importSummary {
+	out := importSummary{
+		ByMode:   map[string]int{},
+		BySource: map[string]importSourceSummary{},
+	}
+	artifactSet := map[string]struct{}{}
+	sourceSet := map[string]struct{}{}
+	modeSet := map[string]struct{}{}
+	for _, record := range imports {
+		out.Total++
+		if record.SupportInstalled {
+			out.SupportInstalled++
+		}
+		if _, ok := artifactSet[record.ArtifactCID]; !ok {
+			artifactSet[record.ArtifactCID] = struct{}{}
+		}
+		if _, ok := sourceSet[record.SourcePath]; !ok {
+			sourceSet[record.SourcePath] = struct{}{}
+		}
+		out.ByMode[record.Mode]++
+		modeSet[record.Mode] = struct{}{}
+		evaluation := trust.Evaluate(policy, record.Signer, false, record.ProtocolPCID, false, &record)
+		if evaluation.OverallTrusted {
+			out.Trusted++
+		} else {
+			out.Untrusted++
+		}
+		sourceSummary := out.BySource[record.SourcePath]
+		sourceSummary.Count++
+		sourceSummary.Trusted = sourceSummary.Trusted || evaluation.OverallTrusted
+		if !stringSliceContains(sourceSummary.Modes, record.Mode) {
+			sourceSummary.Modes = append(sourceSummary.Modes, record.Mode)
+			sort.Strings(sourceSummary.Modes)
+		}
+		if record.ImportedAt > sourceSummary.LastImportedAt {
+			sourceSummary.LastImportedAt = record.ImportedAt
+		}
+		out.BySource[record.SourcePath] = sourceSummary
+	}
+	out.UniqueArtifacts = len(artifactSet)
+	out.UniqueSources = len(sourceSet)
+	for mode := range modeSet {
+		out.Modes = append(out.Modes, mode)
+	}
+	for source := range out.BySource {
+		out.Sources = append(out.Sources, source)
+	}
+	sort.Strings(out.Modes)
+	sort.Strings(out.Sources)
+	return out
+}
+
+func stringSliceContains(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 func emitCommitmentArtifact(root string, store *ledger.Store, registry protocol.Registry, item model.Commitment, promisee string) (model.Commitment, error) {
