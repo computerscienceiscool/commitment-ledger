@@ -77,6 +77,8 @@ func main() {
 		err = runImportAt(root, store, registry, now, os.Args[2:])
 	case "provenance":
 		err = runProvenance(root, store, os.Args[2:])
+	case "reconcile":
+		err = runReconcile(root, store, registry, os.Args[2:])
 	case "send":
 		err = runSend(root, store, registry, now, os.Args[2:])
 	case "receive":
@@ -98,7 +100,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report|inspect|verify|export|import|provenance|send|receive|doctor|repair|identity> [flags]")
+	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report|inspect|verify|export|import|provenance|reconcile|send|receive|doctor|repair|identity> [flags]")
 }
 
 func runScan(root string, store *ledger.Store, registry protocol.Registry, now time.Time, args []string) error {
@@ -880,6 +882,62 @@ func runProvenance(root string, store *ledger.Store, args []string) error {
 		}
 		fmt.Println()
 	}
+	return nil
+}
+
+func runReconcile(root string, store *ledger.Store, registry protocol.Registry, args []string) error {
+	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
+	artifactRef := fs.String("artifact", "", "filter by artifact CID or local reference")
+	sourcePath := fs.String("source", "", "filter by source path")
+	signer := fs.String("signer", "", "filter by artifact signer")
+	receiptSigner := fs.String("receipt-signer", "", "filter by receipt signer")
+	mode := fs.String("mode", "", "filter by import mode")
+	protocolPCID := fs.String("protocol-pcid", "", "filter by protocol pCID")
+	jsonOut := fs.Bool("json", false, "emit JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("reconcile does not accept positional references")
+	}
+
+	imports, err := store.LoadImports()
+	if err != nil {
+		return err
+	}
+	artifacts, err := store.LoadArtifacts()
+	if err != nil {
+		return err
+	}
+	policy, err := trust.Load(root)
+	if err != nil {
+		return err
+	}
+
+	resolvedArtifactCID := strings.TrimSpace(*artifactRef)
+	if resolvedArtifactCID != "" {
+		commitments, err := store.LoadLatestCommitments()
+		if err != nil {
+			return err
+		}
+		evidenceItems, err := store.LoadEvidence()
+		if err != nil {
+			return err
+		}
+		assessments, err := store.LoadAssessments()
+		if err != nil {
+			return err
+		}
+		if artifact, err := resolveArtifactReference(resolvedArtifactCID, artifacts, commitments, evidenceItems, assessments); err == nil {
+			resolvedArtifactCID = artifact.ArtifactCID
+		}
+	}
+
+	rows := buildReconcileRows(root, registry, policy, imports, artifacts, resolvedArtifactCID, *sourcePath, *signer, *receiptSigner, *mode, *protocolPCID)
+	if *jsonOut {
+		return printJSON(rows)
+	}
+	printReconcileRows(rows)
 	return nil
 }
 
@@ -2196,6 +2254,53 @@ type provenanceRow struct {
 	Receipts                []model.ArtifactRecord `json:"receipts,omitempty"`
 }
 
+type reconcileImport struct {
+	ImportedAt              string `json:"imported_at"`
+	Mode                    string `json:"mode"`
+	SourcePath              string `json:"source_path"`
+	SupportInstalled        bool   `json:"support_installed"`
+	Trusted                 bool   `json:"trusted"`
+	InstalledProtocolPCID   string `json:"installed_protocol_pcid,omitempty"`
+	InstalledSignerIdentity string `json:"installed_signer_identity,omitempty"`
+	ReceiptArtifactCID      string `json:"receipt_artifact_cid,omitempty"`
+}
+
+type reconcileReceipt struct {
+	ArtifactCID string `json:"artifact_cid"`
+	RelatedID   string `json:"related_id,omitempty"`
+	Signer      string `json:"signer,omitempty"`
+	SignerKeyID string `json:"signer_key_id,omitempty"`
+	ObservedAt  string `json:"observed_at,omitempty"`
+}
+
+type reconcileRow struct {
+	ArtifactCID             string             `json:"artifact_cid"`
+	RelatedID               string             `json:"related_id,omitempty"`
+	Kind                    string             `json:"kind,omitempty"`
+	ProtocolName            string             `json:"protocol_name,omitempty"`
+	ProtocolPCID            string             `json:"protocol_pcid,omitempty"`
+	ProtocolPath            string             `json:"protocol_path,omitempty"`
+	Signer                  string             `json:"signer,omitempty"`
+	SignerKeyID             string             `json:"signer_key_id,omitempty"`
+	SignerKeyState          string             `json:"signer_key_state,omitempty"`
+	SignerIdentityPath      string             `json:"signer_identity_path,omitempty"`
+	ImportCount             int                `json:"import_count"`
+	TrustedImports          int                `json:"trusted_imports"`
+	UntrustedImports        int                `json:"untrusted_imports"`
+	SupportInstalledImports int                `json:"support_installed_imports"`
+	Reimported              bool               `json:"reimported"`
+	MultipleSources         bool               `json:"multiple_sources"`
+	ImportModes             []string           `json:"import_modes,omitempty"`
+	SourcePaths             []string           `json:"source_paths,omitempty"`
+	Imports                 []reconcileImport  `json:"imports"`
+	ReceiptCount            int                `json:"receipt_count"`
+	ReceiptSigners          []string           `json:"receipt_signers,omitempty"`
+	Receipts                []reconcileReceipt `json:"receipts,omitempty"`
+	LatestImportAt          string             `json:"latest_import_at,omitempty"`
+	LatestImportMode        string             `json:"latest_import_mode,omitempty"`
+	LatestImportSource      string             `json:"latest_import_source,omitempty"`
+}
+
 func inspectReference(root string, registry protocol.Registry, ref string, artifacts []model.ArtifactRecord, commitments map[string]model.Commitment, evidenceItems []model.Evidence, assessments []model.Assessment, imports []model.ImportRecord) (inspectView, error) {
 	artifactByCID := artifactIndexByCID(artifacts)
 
@@ -2330,6 +2435,149 @@ func buildProvenanceRows(imports []model.ImportRecord, artifacts []model.Artifac
 			Receipts:                rowReceipts,
 		})
 	}
+	return rows
+}
+
+func buildReconcileRows(root string, registry protocol.Registry, policy trust.Policy, imports []model.ImportRecord, artifacts []model.ArtifactRecord, artifactCID string, sourcePath string, signer string, receiptSigner string, mode string, protocolPCID string) []reconcileRow {
+	artifactIndex := artifactIndexByCID(artifacts)
+	receiptsByArtifact := receiptArtifactsByImportedArtifact(artifacts)
+	rowsByArtifact := map[string]*reconcileRow{}
+
+	for i := len(imports) - 1; i >= 0; i-- {
+		record := imports[i]
+		if artifactCID != "" && record.ArtifactCID != artifactCID {
+			continue
+		}
+		if sourcePath != "" && record.SourcePath != sourcePath {
+			continue
+		}
+		if signer != "" && record.Signer != signer {
+			continue
+		}
+		if protocolPCID != "" && record.ProtocolPCID != protocolPCID {
+			continue
+		}
+		if mode != "" && record.Mode != mode {
+			continue
+		}
+
+		filteredReceipts := filterReceiptArtifacts(receiptsByArtifact[record.ArtifactCID], receiptSigner)
+		if receiptSigner != "" && len(filteredReceipts) == 0 {
+			continue
+		}
+
+		row := rowsByArtifact[record.ArtifactCID]
+		if row == nil {
+			row = &reconcileRow{
+				ArtifactCID:  record.ArtifactCID,
+				RelatedID:    record.RelatedID,
+				ProtocolPCID: record.ProtocolPCID,
+				Signer:       record.Signer,
+			}
+			if artifact, ok := artifactIndex[record.ArtifactCID]; ok {
+				row.Kind = artifact.Kind
+				row.RelatedID = emptyFallback(row.RelatedID, artifact.RelatedID)
+				row.ProtocolPCID = emptyFallback(row.ProtocolPCID, artifact.ProtocolPCID)
+				row.Signer = emptyFallback(row.Signer, artifact.Signer)
+				row.SignerKeyID = artifact.SignerKeyID
+				if artifact.Signer != "" && artifact.SignerKeyID != "" {
+					if match, err := resolveIdentityMatch(root, artifact.Signer, artifact.SignerKeyID); err == nil {
+						row.SignerKeyState = match.KeyState
+						row.SignerIdentityPath = match.Info.Path
+					}
+				}
+			}
+			if row.ProtocolPCID != "" {
+				location := resolveProtocolLocation(root, registry, row.ProtocolPCID)
+				if location.Matched {
+					row.ProtocolName = location.Name
+					row.ProtocolPath = location.Path
+				}
+			}
+			if len(filteredReceipts) > 0 {
+				receiptSignerSet := map[string]struct{}{}
+				row.Receipts = make([]reconcileReceipt, 0, len(filteredReceipts))
+				for _, receipt := range filteredReceipts {
+					row.Receipts = append(row.Receipts, reconcileReceipt{
+						ArtifactCID: receipt.ArtifactCID,
+						RelatedID:   receipt.RelatedID,
+						Signer:      receipt.Signer,
+						SignerKeyID: receipt.SignerKeyID,
+						ObservedAt:  receipt.ObservedAt,
+					})
+					if receipt.Signer != "" {
+						receiptSignerSet[receipt.Signer] = struct{}{}
+					}
+				}
+				sort.Slice(row.Receipts, func(i, j int) bool {
+					if row.Receipts[i].ObservedAt == row.Receipts[j].ObservedAt {
+						return row.Receipts[i].ArtifactCID < row.Receipts[j].ArtifactCID
+					}
+					return row.Receipts[i].ObservedAt > row.Receipts[j].ObservedAt
+				})
+				row.ReceiptCount = len(row.Receipts)
+				row.ReceiptSigners = sortedKeys(receiptSignerSet)
+			}
+			rowsByArtifact[record.ArtifactCID] = row
+		}
+
+		evaluation := trust.Evaluate(policy, record.Signer, false, record.ProtocolPCID, false, &record)
+		row.ImportCount++
+		if evaluation.OverallTrusted {
+			row.TrustedImports++
+		} else {
+			row.UntrustedImports++
+		}
+		if record.SupportInstalled {
+			row.SupportInstalledImports++
+		}
+		if !stringSliceContains(row.ImportModes, record.Mode) {
+			row.ImportModes = append(row.ImportModes, record.Mode)
+			sort.Strings(row.ImportModes)
+		}
+		if !stringSliceContains(row.SourcePaths, record.SourcePath) {
+			row.SourcePaths = append(row.SourcePaths, record.SourcePath)
+			sort.Strings(row.SourcePaths)
+		}
+		if record.ImportedAt > row.LatestImportAt {
+			row.LatestImportAt = record.ImportedAt
+			row.LatestImportMode = record.Mode
+			row.LatestImportSource = record.SourcePath
+		}
+		row.Imports = append(row.Imports, reconcileImport{
+			ImportedAt:              record.ImportedAt,
+			Mode:                    record.Mode,
+			SourcePath:              record.SourcePath,
+			SupportInstalled:        record.SupportInstalled,
+			Trusted:                 evaluation.OverallTrusted,
+			InstalledProtocolPCID:   record.InstalledProtocolPCID,
+			InstalledSignerIdentity: record.InstalledSignerIdentity,
+			ReceiptArtifactCID:      record.ReceiptArtifactCID,
+		})
+	}
+
+	rows := make([]reconcileRow, 0, len(rowsByArtifact))
+	for _, row := range rowsByArtifact {
+		sort.Slice(row.Imports, func(i, j int) bool {
+			if row.Imports[i].ImportedAt == row.Imports[j].ImportedAt {
+				if row.Imports[i].Mode == row.Imports[j].Mode {
+					return row.Imports[i].SourcePath < row.Imports[j].SourcePath
+				}
+				return row.Imports[i].Mode < row.Imports[j].Mode
+			}
+			return row.Imports[i].ImportedAt > row.Imports[j].ImportedAt
+		})
+		row.Reimported = row.ImportCount > 1
+		row.MultipleSources = len(row.SourcePaths) > 1
+		rows = append(rows, *row)
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].LatestImportAt == rows[j].LatestImportAt {
+			return rows[i].ArtifactCID < rows[j].ArtifactCID
+		}
+		return rows[i].LatestImportAt > rows[j].LatestImportAt
+	})
 	return rows
 }
 
@@ -2790,6 +3038,49 @@ func enrichInspectView(root string, registry protocol.Registry, view inspectView
 		view.ConformanceEntries = entries
 	}
 	return view
+}
+
+func printReconcileRows(rows []reconcileRow) {
+	for _, row := range rows {
+		fmt.Printf("Artifact CID: %s\n", row.ArtifactCID)
+		fmt.Printf("Related ID: %s\n", emptyFallback(row.RelatedID, "(none)"))
+		fmt.Printf("Kind: %s\n", emptyFallback(row.Kind, "(unknown)"))
+		fmt.Printf("Protocol: %s\n", emptyFallback(row.ProtocolName, "(unknown local spec)"))
+		fmt.Printf("Protocol pCID: %s\n", emptyFallback(row.ProtocolPCID, "(none)"))
+		if row.ProtocolPath != "" {
+			fmt.Printf("Protocol Doc: %s\n", row.ProtocolPath)
+		}
+		fmt.Printf("Signer: %s\n", emptyFallback(row.Signer, "(none)"))
+		fmt.Printf("Signer Key ID: %s\n", emptyFallback(row.SignerKeyID, "(none)"))
+		if row.SignerKeyState != "" {
+			fmt.Printf("Signer Key State: %s\n", row.SignerKeyState)
+		}
+		if row.SignerIdentityPath != "" {
+			fmt.Printf("Signer Identity Path: %s\n", row.SignerIdentityPath)
+		}
+		fmt.Printf("Import Count: %d\n", row.ImportCount)
+		fmt.Printf("Reimported: %s\n", yesNo(row.Reimported))
+		fmt.Printf("Multiple Sources: %s\n", yesNo(row.MultipleSources))
+		fmt.Printf("Trusted Imports: %d\n", row.TrustedImports)
+		fmt.Printf("Untrusted Imports: %d\n", row.UntrustedImports)
+		fmt.Printf("Support Installed Imports: %d\n", row.SupportInstalledImports)
+		fmt.Printf("Modes: %s\n", emptyFallback(strings.Join(row.ImportModes, ", "), "(none)"))
+		fmt.Printf("Sources: %s\n", emptyFallback(strings.Join(row.SourcePaths, ", "), "(none)"))
+		if row.LatestImportAt != "" {
+			fmt.Printf("Latest Import: %s via %s from %s\n", row.LatestImportAt, row.LatestImportMode, row.LatestImportSource)
+		}
+		fmt.Printf("Receipt Count: %d\n", row.ReceiptCount)
+		if len(row.ReceiptSigners) > 0 {
+			fmt.Printf("Receipt Signers: %s\n", strings.Join(row.ReceiptSigners, ", "))
+		}
+		for _, item := range row.Imports {
+			fmt.Printf("Import: %s via %s trusted=%s support=%s source=%s\n", item.ImportedAt, item.Mode, yesNo(item.Trusted), yesNo(item.SupportInstalled), item.SourcePath)
+		}
+		for _, receipt := range row.Receipts {
+			fmt.Printf("Receipt: %s by %s at %s\n", receipt.ArtifactCID, emptyFallback(receipt.Signer, "(none)"), emptyFallback(receipt.ObservedAt, "(none)"))
+		}
+		fmt.Println()
+	}
 }
 
 func printInspectView(view inspectView) {

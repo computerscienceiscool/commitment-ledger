@@ -1616,6 +1616,134 @@ func TestRunProvenanceFiltersByReceiptSignerAndProtocolPCID(t *testing.T) {
 	}
 }
 
+func TestRunReconcileShowsBundleReceiptChain(t *testing.T) {
+	exportRoot := t.TempDir()
+	copyProtocolDocs(t, exportRoot)
+	exportStore := ledger.NewStore(exportRoot)
+	exportRegistry, err := protocol.Load(exportRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load export: %v", err)
+	}
+
+	repoPath := filepath.Join(exportRoot, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(exportRoot, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+
+	now := time.Date(2026, 6, 25, 0, 20, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(exportRoot, exportStore, exportRegistry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan: %v", err)
+	}
+	if err := runCommit(exportRoot, exportStore, exportRegistry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+	commitment := latestCommitment(t, exportStore)
+	outbox := filepath.Join(exportRoot, "outbox")
+	if err := runSend(exportRoot, exportStore, exportRegistry, now.Add(2*time.Minute), []string{"--outbox", outbox, commitment.CommitmentID}); err != nil {
+		t.Fatalf("runSend: %v", err)
+	}
+	files, err := os.ReadDir(outbox)
+	if err != nil {
+		t.Fatalf("ReadDir outbox: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("outbox files = %d, want 1", len(files))
+	}
+
+	importRoot := t.TempDir()
+	copyProtocolDocs(t, importRoot)
+	importStore := ledger.NewStore(importRoot)
+	importRegistry, err := protocol.Load(importRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load import: %v", err)
+	}
+	archive := filepath.Join(importRoot, "archive")
+	writeTrustPolicy(t, importRoot, map[string]any{
+		"trust_built_in_signers":       false,
+		"trust_built_in_protocols":     false,
+		"trusted_signers":              []string{"Alice"},
+		"trusted_protocol_pcids":       []string{commitment.ProtocolPCID},
+		"trusted_import_modes":         []string{"receive", "import"},
+		"trusted_import_path_prefixes": []string{outbox, archive},
+	})
+	if err := runReceive(importRoot, importStore, importRegistry, now.Add(3*time.Minute), []string{"--inbox", outbox, "--archive", archive}); err != nil {
+		t.Fatalf("runReceive: %v", err)
+	}
+	archived, err := os.ReadDir(archive)
+	if err != nil {
+		t.Fatalf("ReadDir archive: %v", err)
+	}
+	if len(archived) != 1 {
+		t.Fatalf("archived files = %d, want 1", len(archived))
+	}
+	archivedBundlePath := filepath.Join(archive, archived[0].Name())
+	if err := runImportAt(importRoot, importStore, importRegistry, now.Add(4*time.Minute), []string{"--in", archivedBundlePath}); err != nil {
+		t.Fatalf("runImportAt: %v", err)
+	}
+
+	textOut := captureStdout(t, func() error {
+		return runReconcile(importRoot, importStore, importRegistry, []string{"--artifact", commitment.CommitmentID})
+	})
+	for _, fragment := range []string{
+		"Artifact CID: " + commitment.ArtifactCID,
+		"Related ID: " + commitment.CommitmentID,
+		"Kind: commitment_promise",
+		"Signer Key State: imported",
+		"Import Count: 2",
+		"Reimported: yes",
+		"Multiple Sources: yes",
+		"Trusted Imports: 2",
+		"Modes: import, receive",
+		"Receipt Count: 1",
+		"Receipt Signers: commitment-ledger",
+		"source=" + archivedBundlePath,
+		"source=" + filepath.Join(outbox, files[0].Name()),
+	} {
+		if !strings.Contains(textOut, fragment) {
+			t.Fatalf("reconcile output missing %q:\n%s", fragment, textOut)
+		}
+	}
+
+	jsonOut := captureStdout(t, func() error {
+		return runReconcile(importRoot, importStore, importRegistry, []string{
+			"--artifact", commitment.CommitmentID,
+			"--receipt-signer", "commitment-ledger",
+			"--json",
+		})
+	})
+	for _, fragment := range []string{
+		"\"artifact_cid\": " + strconv.Quote(commitment.ArtifactCID),
+		"\"related_id\": " + strconv.Quote(commitment.CommitmentID),
+		"\"import_count\": 2",
+		"\"reimported\": true",
+		"\"multiple_sources\": true",
+		"\"receipt_count\": 1",
+		"\"signer_key_state\": \"imported\"",
+		"\"source_path\": " + strconv.Quote(archivedBundlePath),
+	} {
+		if !strings.Contains(jsonOut, fragment) {
+			t.Fatalf("reconcile json output missing %q:\n%s", fragment, jsonOut)
+		}
+	}
+}
+
 func TestRunIdentityRotateArchivesAndReplacesKey(t *testing.T) {
 	root := t.TempDir()
 	if _, _, _, err := identity.LoadOrCreate(root, "Alice"); err != nil {

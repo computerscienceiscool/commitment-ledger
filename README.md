@@ -60,6 +60,7 @@ commitment-ledger verify --json COMMITMENT-...
 commitment-ledger export --out /tmp/bundle.json COMMITMENT-...
 commitment-ledger import --in /tmp/bundle.json
 commitment-ledger provenance --mode receive --json
+commitment-ledger reconcile --artifact COMMITMENT-... --receipt-signer commitment-ledger --json
 commitment-ledger send --outbox /tmp/peer-outbox COMMITMENT-...
 commitment-ledger receive --inbox /tmp/peer-inbox --archive /tmp/peer-archive
 commitment-ledger doctor --json
@@ -95,6 +96,7 @@ Common targets:
 - `make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'`: export an artifact bundle with related projection rows and support material
 - `make import IMPORT_ARGS='--in /tmp/bundle.json'`: import an artifact bundle and optionally install bundled support material
 - `make provenance PROVENANCE_ARGS='--mode receive --receipt-signer commitment-ledger --json'`: browse import and receive provenance by artifact, source path, signer, receipt signer, protocol pCID, or mode
+- `make reconcile RECONCILE_ARGS='--artifact COMMITMENT-... --receipt-signer commitment-ledger --json'`: join repeated imports, bundle source paths, receipt coverage, signer lineage, and trust results into one artifact-centered exchange chain
 - `make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'`: write a bundle into a peer-facing outbox directory
 - `make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'`: import all bundle files from a peer inbox directory and emit local signed receive receipts by default
 - `make doctor DOCTOR_ARGS='--repairable --strict'`: verify local artifact, CAS, and imported support integrity with repairability hints, optional strict warning failures, or JSON output
@@ -125,8 +127,8 @@ does not use them yet.
 
 ## Trust Policy
 
-If `config/trust-policy.json` exists, `verify`, `status --exchange`, and
-`report --imports` use it for local trust evaluation.
+If `config/trust-policy.json` exists, `verify`, `status --exchange`,
+`report --imports`, and `reconcile` use it for local trust evaluation.
 
 Current supported fields:
 
@@ -170,12 +172,13 @@ Observed work targets are always branch-qualified, for example
 - Repo status summaries surface kept and non-kept terminal outcomes separately.
 - `inspect` resolves commitment IDs, evidence IDs, assessment IDs, receipt IDs, and artifact CIDs back to their local artifact metadata, frozen protocol docs, matching `CHANGELOG.md` conformance entries, and latest import provenance when present.
 - `verify` checks local CAS bytes, envelope/payload/proof CIDs, the signature, matching local signer identity material, and optional local trust policy over signer, protocol, and import source.
-- `inspect --json`, `verify --json`, `report --json`, and `doctor --json` provide machine-readable output for automation.
+- `inspect --json`, `verify --json`, `reconcile --json`, `report --json`, and `doctor --json` provide machine-readable output for automation.
 - `inspect` and `verify` now show whether an artifact was signed by the active key, an archived local key, or imported signer support.
 - `status --json` now provides machine-readable repo and exchange summaries for automation.
 - `export` writes a portable bundle containing the artifact index row, envelope bytes, related projection rows, and available signer/protocol support material.
 - `import` loads that bundle back into local CAS and projections, can install bundled signer/protocol support material for later `inspect` and `verify` use, and records import provenance in `data/imports.jsonl`.
 - `provenance` browses `data/imports.jsonl` directly with filters for imported artifact CID, source path, signer, receipt signer, protocol pCID, and mode, and cross-links local receive receipts when present.
+- `reconcile` joins those raw provenance rows into an artifact-level exchange chain that shows repeated imports, source paths, receipt coverage, signer key state, and trust results together.
 - `import` rejects conflicting commitment, evidence, assessment, signer-support, and protocol-support state instead of silently diverging local history.
 - bundle files and `config/trust-policy.json` are parsed with strict schema checks; unknown fields and incomplete required sections now fail early.
 - `send` and `receive` add a local filesystem inbox/outbox exchange path on top of the bundle format; they are still not network transport.

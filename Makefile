@@ -23,6 +23,7 @@ VERIFY_ARGS ?=
 EXPORT_ARGS ?=
 IMPORT_ARGS ?=
 PROVENANCE_ARGS ?=
+RECONCILE_ARGS ?=
 SEND_ARGS ?=
 RECEIVE_ARGS ?=
 DOCTOR_ARGS ?=
@@ -30,7 +31,7 @@ REPAIR_ARGS ?=
 IDENTITY_ARGS ?=
 TODO_REPOS := alice-demo bob-demo dave-demo mallory-demo
 
-.PHONY: help fmt test build check clean cli scan status report inspect verify export import provenance send receive doctor repair identity conformance conformance-update expire commit evidence assess \
+.PHONY: help fmt test build check clean cli scan status report inspect verify export import provenance reconcile send receive doctor repair identity conformance conformance-update expire commit evidence assess \
 	demo-init demo-seed demo-config demo-setup demo-scan demo-status demo-report
 
 help:
@@ -54,6 +55,7 @@ help:
 	@echo "  make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'"
 	@echo "  make import IMPORT_ARGS='--in /tmp/bundle.json'"
 	@echo "  make provenance PROVENANCE_ARGS='--mode receive --receipt-signer commitment-ledger --json'"
+	@echo "  make reconcile RECONCILE_ARGS='--artifact COMMITMENT-... --receipt-signer commitment-ledger --json'"
 	@echo "  make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'"
 	@echo "  make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'"
 	@echo "  make doctor DOCTOR_ARGS='--repairable --strict'"
@@ -114,6 +116,9 @@ import:
 
 provenance:
 	@$(RUN) provenance $(PROVENANCE_ARGS)
+
+reconcile:
+	@$(RUN) reconcile $(RECONCILE_ARGS)
 
 send:
 	@$(RUN) send $(SEND_ARGS)

@@ -30,6 +30,7 @@ make conformance-update VERSION=v0.1.0 SIGNER=commitment-ledger
 make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'
 make import IMPORT_ARGS='--in /tmp/bundle.json'
 make provenance PROVENANCE_ARGS='--mode receive --json'
+make reconcile RECONCILE_ARGS='--artifact COMMITMENT-... --receipt-signer commitment-ledger --json'
 make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'
 make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'
 make doctor DOCTOR_ARGS='--repairable'
@@ -231,8 +232,8 @@ machine-readable form.
 
 ### `config/trust-policy.json`
 
-Optional local trust-policy file used by `verify`, `status --exchange`, and
-`report --imports`.
+Optional local trust-policy file used by `verify`, `status --exchange`,
+`report --imports`, and `reconcile`.
 
 Current fields:
 
@@ -316,6 +317,37 @@ You can filter by:
 
 The output also shows any local receive-receipt artifacts that acknowledge the
 imported artifact.
+
+### `reconcile`
+
+```bash
+go run ./cmd/commitment-ledger reconcile --artifact COMMITMENT-...
+go run ./cmd/commitment-ledger reconcile --artifact bafy... --receipt-signer commitment-ledger
+go run ./cmd/commitment-ledger reconcile --source /tmp/peer-inbox/bundle.json --json
+go run ./cmd/commitment-ledger reconcile --mode receive --protocol-pcid bafy... --json
+```
+
+`reconcile` is the artifact-level exchange view built on top of raw provenance
+rows.
+
+Use it when you need one direct answer for:
+
+- which bundle source paths introduced an artifact
+- whether the same artifact was imported again through another path or mode
+- which local receive receipts acknowledge that artifact
+- what signer key state and trust outcome apply across the chain
+
+Each row shows:
+
+- artifact CID, related local ID, kind, and protocol doc
+- signer, signer key ID, signer key state, and identity path when resolvable
+- import count, mode set, source-path set, and latest import
+- trusted vs untrusted import counts under the current trust policy
+- receipt count and receipt signers
+- per-import lines so you can see repeated imports directly
+
+Use `--json` when you want the same reconciliation chain in machine-readable
+form for automation or audit scripts.
 
 ### `send`
 

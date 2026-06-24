@@ -13,6 +13,7 @@ Retrospective note:
 - The retrospective checklist at the end of this file records the major later
   work that was completed but not tracked here in the intended way.
 
+- [x] TODO-lavok - Add bundle-to-receipt reconciliation views (`TODO/TODO-lavok-add-bundle-to-receipt-reconciliation-views.md`)
 - [x] TODO-togiv - Restore validation and conflict handling polish (`TODO/TODO-togiv-restore-validation-and-conflict-handling-polish.md`)
 - [x] TODO-temuk - Add bundle export/import artifact exchange (`TODO/TODO-temuk-add-bundle-export-import-artifact-exchange.md`)
 - [x] TODO-vupat - Add artifact verification command and trust docs (`TODO/TODO-vupat-add-artifact-verification-command-and-trust-docs.md`)
