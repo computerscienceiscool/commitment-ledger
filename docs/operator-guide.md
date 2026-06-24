@@ -450,7 +450,7 @@ no longer exist locally.
 go run ./cmd/commitment-ledger identity list --json
 go run ./cmd/commitment-ledger identity show Alice
 go run ./cmd/commitment-ledger identity history Alice --json
-go run ./cmd/commitment-ledger identity backup --out /tmp/alice-identities.json Alice
+go run ./cmd/commitment-ledger identity backup --include-imported-support --out /tmp/alice-identities.json Alice
 go run ./cmd/commitment-ledger identity restore --in /tmp/alice-identities.json Alice
 go run ./cmd/commitment-ledger identity rotate --name Alice
 ```
@@ -462,10 +462,13 @@ go run ./cmd/commitment-ledger identity rotate --name Alice
 - `history` shows the current key plus archived and imported key material for
   one signer name
 - `backup` exports current plus archived local private identity material for one
-  signer or for all local primary signers when no names are given
+  signer or for all local primary signers when no names are given; add
+  `--include-imported-support` to also capture imported signer and protocol
+  support material
 - `restore` restores current and archived local private identity material from a
-  backup file, reports partial success, skips identical existing files, and
-  flags explicit conflicts when local key material differs from the backup
+  backup file, restores bundled imported signer/protocol support when present,
+  reports partial success, skips identical existing files, and flags explicit
+  conflicts when local material differs from the backup
 - `rotate` archives the old private key file under `config/identities/archive/`
   and writes a new keypair to the primary identity path
 
@@ -541,6 +544,9 @@ For signer continuity, you can also export a dedicated identity backup file:
 ```bash
 go run ./cmd/commitment-ledger identity backup --out /safe/path/identities.json
 ```
+
+Add `--include-imported-support` if you also want the backup file to preserve
+`config/imported-identities/` and `data/imported-protocols/`.
 
 Recommended recovery flow:
 

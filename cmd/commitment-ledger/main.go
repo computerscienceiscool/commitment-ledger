@@ -1257,8 +1257,10 @@ type identityHistory struct {
 }
 
 type identityBackup struct {
-	ExportedAt string                  `json:"exported_at"`
-	Identities []identityBackupHistory `json:"identities"`
+	ExportedAt         string                     `json:"exported_at"`
+	Identities         []identityBackupHistory    `json:"identities,omitempty"`
+	ImportedIdentities []identity.Identity        `json:"imported_identities,omitempty"`
+	ImportedProtocols  []exchange.ProtocolSupport `json:"imported_protocols,omitempty"`
 }
 
 type identityBackupHistory struct {
@@ -1268,14 +1270,18 @@ type identityBackupHistory struct {
 }
 
 type identityRestoreResult struct {
-	RequestedNames   []string `json:"requested_names,omitempty"`
-	RestoredCurrent  int      `json:"restored_current"`
-	RestoredArchived int      `json:"restored_archived"`
-	SkippedCurrent   int      `json:"skipped_current"`
-	SkippedArchived  int      `json:"skipped_archived"`
-	Partial          bool     `json:"partial"`
-	Conflicts        []string `json:"conflicts,omitempty"`
-	Skipped          []string `json:"skipped,omitempty"`
+	RequestedNames             []string `json:"requested_names,omitempty"`
+	RestoredCurrent            int      `json:"restored_current"`
+	RestoredArchived           int      `json:"restored_archived"`
+	RestoredImportedIdentities int      `json:"restored_imported_identities"`
+	RestoredImportedProtocols  int      `json:"restored_imported_protocols"`
+	SkippedCurrent             int      `json:"skipped_current"`
+	SkippedArchived            int      `json:"skipped_archived"`
+	SkippedImportedIdentities  int      `json:"skipped_imported_identities"`
+	SkippedImportedProtocols   int      `json:"skipped_imported_protocols"`
+	Partial                    bool     `json:"partial"`
+	Conflicts                  []string `json:"conflicts,omitempty"`
+	Skipped                    []string `json:"skipped,omitempty"`
 }
 
 type repairApplied struct {
@@ -1405,10 +1411,11 @@ func runIdentityBackup(root string, args []string) error {
 	fs := flag.NewFlagSet("identity backup", flag.ContinueOnError)
 	outPath := fs.String("out", "", "write backup json to this path")
 	jsonOut := fs.Bool("json", false, "emit JSON to stdout")
+	includeImportedSupport := fs.Bool("include-imported-support", false, "include imported signer and protocol support material")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	backup, err := buildIdentityBackup(root, fs.Args())
+	backup, err := buildIdentityBackup(root, fs.Args(), *includeImportedSupport)
 	if err != nil {
 		return err
 	}
@@ -1429,6 +1436,8 @@ func runIdentityBackup(root string, args []string) error {
 	}
 	fmt.Printf("Wrote identity backup: %s\n", *outPath)
 	fmt.Printf("Identities backed up: %d\n", len(backup.Identities))
+	fmt.Printf("Imported signer support backed up: %d\n", len(backup.ImportedIdentities))
+	fmt.Printf("Imported protocol support backed up: %d\n", len(backup.ImportedProtocols))
 	return nil
 }
 
@@ -1464,8 +1473,12 @@ func runIdentityRestore(root string, args []string) error {
 	}
 	fmt.Printf("Restored current identities: %d\n", result.RestoredCurrent)
 	fmt.Printf("Restored archived identities: %d\n", result.RestoredArchived)
+	fmt.Printf("Restored imported identities: %d\n", result.RestoredImportedIdentities)
+	fmt.Printf("Restored imported protocols: %d\n", result.RestoredImportedProtocols)
 	fmt.Printf("Skipped current identities: %d\n", result.SkippedCurrent)
 	fmt.Printf("Skipped archived identities: %d\n", result.SkippedArchived)
+	fmt.Printf("Skipped imported identities: %d\n", result.SkippedImportedIdentities)
+	fmt.Printf("Skipped imported protocols: %d\n", result.SkippedImportedProtocols)
 	fmt.Printf("Partial restore: %s\n", yesNo(result.Partial))
 	if len(result.Conflicts) > 0 {
 		fmt.Printf("Conflicts: %d\n", len(result.Conflicts))
@@ -1600,7 +1613,7 @@ func loadIdentityHistory(root string, name string) (identityHistory, error) {
 	return history, nil
 }
 
-func buildIdentityBackup(root string, names []string) (identityBackup, error) {
+func buildIdentityBackup(root string, names []string, includeImportedSupport bool) (identityBackup, error) {
 	selected := names
 	if len(selected) == 0 {
 		items, err := listIdentityDir(root, filepath.Join(root, "config", "identities"), "primary")
@@ -1629,6 +1642,18 @@ func buildIdentityBackup(root string, names []string) (identityBackup, error) {
 		}
 		out.Identities = append(out.Identities, history)
 	}
+	if includeImportedSupport {
+		importedIdentities, err := loadImportedIdentityBackupEntries(root)
+		if err != nil {
+			return identityBackup{}, err
+		}
+		importedProtocols, err := loadImportedProtocolBackupEntries(root)
+		if err != nil {
+			return identityBackup{}, err
+		}
+		out.ImportedIdentities = importedIdentities
+		out.ImportedProtocols = importedProtocols
+	}
 	return out, nil
 }
 
@@ -1643,10 +1668,69 @@ func loadIdentityBackupFile(path string) (identityBackup, error) {
 	if err := dec.Decode(&backup); err != nil {
 		return identityBackup{}, fmt.Errorf("parse identity backup %q: %w", path, err)
 	}
-	if len(backup.Identities) == 0 {
+	if len(backup.Identities) == 0 && len(backup.ImportedIdentities) == 0 && len(backup.ImportedProtocols) == 0 {
 		return identityBackup{}, fmt.Errorf("identity backup %q contains no identities", path)
 	}
 	return backup, nil
+}
+
+func loadImportedIdentityBackupEntries(root string) ([]identity.Identity, error) {
+	dir := filepath.Join(root, "config", "imported-identities")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read imported identity dir %q: %w", dir, err)
+	}
+	out := []identity.Identity{}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		ident, err := readIdentityFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ident)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Name == out[j].Name {
+			return out[i].KeyID < out[j].KeyID
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
+}
+
+func loadImportedProtocolBackupEntries(root string) ([]exchange.ProtocolSupport, error) {
+	dir := filepath.Join(root, "data", "imported-protocols")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read imported protocol dir %q: %w", dir, err)
+	}
+	out := []exchange.ProtocolSupport{}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		pcid := strings.TrimSuffix(entry.Name(), ".json")
+		support, err := loadImportedProtocolSupport(root, pcid)
+		if err != nil {
+			return nil, err
+		}
+		docBytes, err := os.ReadFile(importedProtocolDocPath(root, pcid))
+		if err != nil {
+			return nil, fmt.Errorf("read imported protocol doc %q: %w", importedProtocolDocPath(root, pcid), err)
+		}
+		support.DocumentBytes = base64.StdEncoding.EncodeToString(docBytes)
+		out = append(out, support)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ProtocolPCID < out[j].ProtocolPCID })
+	return out, nil
 }
 
 func loadIdentityBackupHistory(root string, name string) (identityBackupHistory, error) {
@@ -1724,12 +1808,50 @@ func restoreIdentityBackup(root string, backup identityBackup, names []string) (
 			}
 		}
 	}
+	for _, item := range backup.ImportedIdentities {
+		status, err := installSignerSupportForRestore(root, exchange.SignerSupport{
+			Name:      item.Name,
+			KeyID:     item.KeyID,
+			PublicKey: item.PublicKey,
+		})
+		if err != nil {
+			return identityRestoreResult{}, err
+		}
+		switch status {
+		case "restored":
+			result.RestoredImportedIdentities++
+		case "skipped":
+			result.SkippedImportedIdentities++
+			result.Skipped = append(result.Skipped, fmt.Sprintf("imported identity %s already matched %s", item.Name, filepath.Join(root, "config", "imported-identities", importedIdentityFilename(item.Name))))
+		case "conflict":
+			result.Conflicts = append(result.Conflicts, fmt.Sprintf("imported identity %s at %s differs from backup", item.Name, filepath.Join(root, "config", "imported-identities", importedIdentityFilename(item.Name))))
+		}
+	}
+	for _, item := range backup.ImportedProtocols {
+		status, err := installProtocolSupportForRestore(root, item)
+		if err != nil {
+			return identityRestoreResult{}, err
+		}
+		switch status {
+		case "restored":
+			result.RestoredImportedProtocols++
+		case "skipped":
+			result.SkippedImportedProtocols++
+			result.Skipped = append(result.Skipped, fmt.Sprintf("imported protocol %s already matched %s", item.ProtocolPCID, importedProtocolMetaPath(root, item.ProtocolPCID)))
+		case "conflict":
+			result.Conflicts = append(result.Conflicts, fmt.Sprintf("imported protocol %s at %s differs from backup", item.ProtocolPCID, importedProtocolMetaPath(root, item.ProtocolPCID)))
+		}
+	}
 	if len(selected) > 0 && result.RestoredCurrent == 0 && result.RestoredArchived == 0 {
-		if len(result.Conflicts) == 0 && result.SkippedCurrent == 0 && result.SkippedArchived == 0 {
+		if len(result.Conflicts) == 0 && result.SkippedCurrent == 0 && result.SkippedArchived == 0 &&
+			result.RestoredImportedIdentities == 0 && result.RestoredImportedProtocols == 0 &&
+			result.SkippedImportedIdentities == 0 && result.SkippedImportedProtocols == 0 {
 			return identityRestoreResult{}, fmt.Errorf("identity backup did not contain requested names")
 		}
 	}
-	result.Partial = len(result.Conflicts) > 0 || result.SkippedCurrent > 0 || result.SkippedArchived > 0
+	result.Partial = len(result.Conflicts) > 0 ||
+		result.SkippedCurrent > 0 || result.SkippedArchived > 0 ||
+		result.SkippedImportedIdentities > 0 || result.SkippedImportedProtocols > 0
 	return result, nil
 }
 
@@ -1754,6 +1876,80 @@ func writeIdentityFileForRestore(path string, ident identity.Identity) (string, 
 	}
 	if err := os.WriteFile(path, payload, 0o600); err != nil {
 		return "", fmt.Errorf("write identity %q: %w", path, err)
+	}
+	return "restored", nil
+}
+
+func installSignerSupportForRestore(root string, support exchange.SignerSupport) (string, error) {
+	path := filepath.Join(root, "config", "imported-identities", importedIdentityFilename(support.Name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", fmt.Errorf("mkdir imported identity dir: %w", err)
+	}
+	payload, err := json.MarshalIndent(identity.Identity{
+		Name:      support.Name,
+		KeyID:     support.KeyID,
+		PublicKey: support.PublicKey,
+	}, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal signer support: %w", err)
+	}
+	if existing, err := os.ReadFile(path); err == nil {
+		if string(existing) != string(payload) {
+			return "conflict", nil
+		}
+		return "skipped", nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("read imported identity %q: %w", path, err)
+	}
+	if err := os.WriteFile(path, payload, 0o644); err != nil {
+		return "", fmt.Errorf("write imported identity: %w", err)
+	}
+	return "restored", nil
+}
+
+func installProtocolSupportForRestore(root string, support exchange.ProtocolSupport) (string, error) {
+	data, err := base64.StdEncoding.DecodeString(support.DocumentBytes)
+	if err != nil {
+		return "", fmt.Errorf("decode protocol support bytes: %w", err)
+	}
+	if got := protocol.SupportPCID(data); got != support.ProtocolPCID {
+		return "", fmt.Errorf("protocol support pCID mismatch: backup=%s computed=%s", support.ProtocolPCID, got)
+	}
+	docPath := importedProtocolDocPath(root, support.ProtocolPCID)
+	metaPath := importedProtocolMetaPath(root, support.ProtocolPCID)
+	if err := os.MkdirAll(filepath.Dir(docPath), 0o755); err != nil {
+		return "", fmt.Errorf("mkdir imported protocol dir: %w", err)
+	}
+	meta, err := json.MarshalIndent(support, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal protocol support: %w", err)
+	}
+	docExists := false
+	if existing, err := os.ReadFile(docPath); err == nil {
+		docExists = true
+		if string(existing) != string(data) {
+			return "conflict", nil
+		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("read imported protocol doc %q: %w", docPath, err)
+	}
+	metaExists := false
+	if existing, err := os.ReadFile(metaPath); err == nil {
+		metaExists = true
+		if string(existing) != string(meta) {
+			return "conflict", nil
+		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("read imported protocol metadata %q: %w", metaPath, err)
+	}
+	if docExists && metaExists {
+		return "skipped", nil
+	}
+	if err := os.WriteFile(docPath, data, 0o644); err != nil {
+		return "", fmt.Errorf("write imported protocol doc: %w", err)
+	}
+	if err := os.WriteFile(metaPath, meta, 0o644); err != nil {
+		return "", fmt.Errorf("write imported protocol metadata: %w", err)
 	}
 	return "restored", nil
 }

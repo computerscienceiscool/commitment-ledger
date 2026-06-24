@@ -2420,6 +2420,63 @@ func TestRunIdentityRestoreReportsConflictAndPartialSuccess(t *testing.T) {
 	}
 }
 
+func TestRunIdentityBackupAndRestoreIncludesImportedSupport(t *testing.T) {
+	sourceRoot := t.TempDir()
+	copyProtocolDocs(t, sourceRoot)
+	store := ledger.NewStore(sourceRoot)
+	registry, err := protocol.Load(sourceRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	bundle := syntheticBundle(t, sourceRoot, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	bundlePath := filepath.Join(sourceRoot, "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+	if err := runImportAt(sourceRoot, store, registry, time.Date(2026, 6, 25, 1, 30, 0, 0, time.FixedZone("PDT", -7*3600)), []string{"--in", bundlePath}); err != nil {
+		t.Fatalf("runImportAt: %v", err)
+	}
+
+	backupPath := filepath.Join(sourceRoot, "backups", "support.json")
+	stdout := captureStdout(t, func() error {
+		return runIdentity(sourceRoot, []string{"backup", "--include-imported-support", "--out", backupPath, "--json"})
+	})
+	for _, fragment := range []string{
+		"\"imported_identities\": [",
+		"\"name\": \"Mallory\"",
+		"\"imported_protocols\": [",
+		"\"protocol_pcid\": " + strconv.Quote(bundle.Protocol.ProtocolPCID),
+	} {
+		if !strings.Contains(stdout, fragment) {
+			t.Fatalf("identity backup with imported support missing %q:\n%s", fragment, stdout)
+		}
+	}
+
+	restoreRoot := t.TempDir()
+	out := captureStdout(t, func() error {
+		return runIdentity(restoreRoot, []string{"restore", "--in", backupPath})
+	})
+	for _, fragment := range []string{
+		"Restored current identities: 1",
+		"Restored archived identities: 0",
+		"Restored imported identities: 1",
+		"Restored imported protocols: 1",
+		"Partial restore: no",
+	} {
+		if !strings.Contains(out, fragment) {
+			t.Fatalf("identity restore imported support output missing %q:\n%s", fragment, out)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(restoreRoot, "config", "imported-identities", importedIdentityFilename("Mallory"))); err != nil {
+		t.Fatalf("expected imported identity restored: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(restoreRoot, "data", "imported-protocols", bundle.Protocol.ProtocolPCID+".json")); err != nil {
+		t.Fatalf("expected imported protocol metadata restored: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(restoreRoot, "data", "imported-protocols", bundle.Protocol.ProtocolPCID+".md")); err != nil {
+		t.Fatalf("expected imported protocol doc restored: %v", err)
+	}
+}
+
 func TestRunDoctorStrictFailsOnWarnings(t *testing.T) {
 	root := t.TempDir()
 	copyProtocolDocs(t, root)

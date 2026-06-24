@@ -69,7 +69,7 @@ commitment-ledger doctor --strict
 commitment-ledger repair --json --import-artifacts --import-support --identity-lineage
 commitment-ledger identity list --json
 commitment-ledger identity history Alice --json
-commitment-ledger identity backup --out /tmp/alice-identities.json Alice
+commitment-ledger identity backup --include-imported-support --out /tmp/alice-identities.json Alice
 commitment-ledger identity restore --in /tmp/alice-identities.json Alice
 commitment-ledger identity rotate --name Alice
 ```
@@ -188,7 +188,7 @@ Observed work targets are always branch-qualified, for example
 - `repair --json` emits machine-readable counts for each applied recovery step.
 - `repair --import-support` restores imported signer and protocol support files from recorded bundle source paths when those support files have gone missing.
 - `repair` rebuilds Markdown records from JSONL state, restores built-in frozen protocol docs into local CAS, and can restore missing imported artifact envelopes from recorded bundle source paths.
-- `identity list`, `identity show`, `identity history`, `identity backup`, `identity restore`, and `identity rotate` provide a basic local signer lifecycle workflow with archive copies of rotated keys; `identity restore` now reports partial success, skipped identical files, and explicit conflicts when local key material differs from the backup.
+- `identity list`, `identity show`, `identity history`, `identity backup`, `identity restore`, and `identity rotate` provide a basic local signer lifecycle workflow with archive copies of rotated keys; `identity backup --include-imported-support` can also preserve imported signer/protocol support, and `identity restore` reports partial success, skipped identical files, and explicit conflicts when local material differs from the backup.
 
 ## Backup And Recovery
 
@@ -203,6 +203,8 @@ For a reliable local backup, capture these together:
 
 You can also export current plus archived private identity material directly
 with `commitment-ledger identity backup --out /safe/path/identities.json`.
+Add `--include-imported-support` when you want the backup file to carry
+`config/imported-identities/` and `data/imported-protocols/` too.
 
 After restoring, run `make doctor` before trusting the restored state.
 
