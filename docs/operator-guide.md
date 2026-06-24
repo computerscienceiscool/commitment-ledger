@@ -4,6 +4,10 @@
 
 This file is the practical runbook for operating Commitment Ledger locally.
 
+For the machine-readable automation surface, also read
+`docs/machine-readable-contracts.md`. That file defines the current local JSON
+contract version and compatibility rules.
+
 Use it when you need to:
 
 - run the normal scan -> commit -> evidence -> assess flow
@@ -144,7 +148,7 @@ Use `status --exchange` for import and exchange summary:
 - receipt-artifact counts, receipt signers, how many imported artifacts have been acknowledged, and whether the same artifact now has multiple receipts
 
 Use `--json` when you need the repo-level or exchange-level status summary in a
-stable machine-readable form.
+stable machine-readable form under `cli-json-v1`.
 
 ### `report`
 
@@ -168,7 +172,8 @@ locally resolved signer states for imported artifacts.
 It also calls out repeated imports, multi-source artifacts, and multiple-receipt
 patterns so operators can spot unusual exchange behavior quickly.
 
-Use `--json` when you need machine-readable summaries for automation.
+Use `--json` when you need machine-readable summaries for automation under
+`cli-json-v1`.
 
 ### `inspect`
 
@@ -203,7 +208,7 @@ It prints:
 - current projected status or evidence details
 
 Use `--json` when the same information needs to feed automation instead of a
-human operator.
+human operator under `cli-json-v1`.
 
 ### `verify`
 
@@ -233,7 +238,7 @@ archived signer key state instead of failing only because the active key has
 changed.
 
 Use `--json` when you need those verification results in a stable
-machine-readable form.
+machine-readable form under `cli-json-v1`.
 
 ### `config/trust-policy.json`
 
@@ -360,7 +365,7 @@ Each row shows:
 - per-import lines so you can see repeated imports directly
 
 Use `--json` when you want the same reconciliation chain in machine-readable
-form for automation or audit scripts.
+form for automation or audit scripts under `cli-json-v1`.
 
 ### `send`
 
@@ -425,6 +430,9 @@ Use `--repairable` when you want the current findings split into:
 Use `--strict` when warnings such as missing human-facing conformance files
 should fail CI or audit runs instead of remaining informational.
 
+Use `--json` when you need the machine-readable health summary defined by
+`cli-json-v1`.
+
 ### `repair`
 
 ```bash
@@ -455,6 +463,9 @@ When a saved bundle path is gone, `doctor` now treats that as a non-repairable
 automation gap and tells you to recover the original bundle or re-import/export
 it from another repo before retrying `repair`.
 
+Use `--json` when you need stable machine-readable recovery counts and applied
+repair flags under `cli-json-v1`.
+
 ### `identity`
 
 ```bash
@@ -482,6 +493,8 @@ go run ./cmd/commitment-ledger identity rotate --name Alice
   conflicts when local material differs from the backup
 - `rotate` archives the old private key file under `config/identities/archive/`
   and writes a new keypair to the primary identity path
+
+The `identity` subcommands with `--json` are also part of `cli-json-v1`.
 
 ## Local State Layout
 

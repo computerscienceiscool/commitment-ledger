@@ -48,6 +48,10 @@ missing imported artifact envelopes when the original bundle source paths are
 still available locally, but it still does not resolve conflicting imported
 state automatically.
 
+Current local automation output is documented separately from protocol docs in
+`docs/machine-readable-contracts.md`. That file currently publishes the local
+CLI JSON compatibility contract as `cli-json-v1`.
+
 ## Conformance Claim Path
 
 This repo now publishes conformance in two aligned ways:
@@ -87,4 +91,5 @@ instead of reading projection files directly first:
 - `report` for filtered views
 - `inspect` for artifact and record lookup
 - `verify` for local artifact and signer-material verification
+- `docs/machine-readable-contracts.md` for the current JSON automation contract
 - `docs/operator-guide.md` for normal workflow and troubleshooting

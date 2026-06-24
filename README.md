@@ -125,6 +125,19 @@ Each repo entry in `config/repos.json` currently supports these fields:
 The JSON shape also includes `provider` and `url`, but v0.1 is local-only and
 does not use them yet.
 
+## Machine-Readable Contract
+
+The current local CLI JSON automation contract is documented in
+`docs/machine-readable-contracts.md`.
+
+Current version:
+
+- `cli-json-v1`
+
+That version covers `--json` stdout outputs plus local JSON file formats such
+as export bundles and identity backups. It is separate from frozen protocol
+versioning under `docs/protocols/`.
+
 ## Trust Policy
 
 If `config/trust-policy.json` exists, `verify`, `status --exchange`,
@@ -172,7 +185,7 @@ Observed work targets are always branch-qualified, for example
 - Repo status summaries surface kept and non-kept terminal outcomes separately.
 - `inspect` resolves commitment IDs, evidence IDs, assessment IDs, receipt IDs, and artifact CIDs back to their local artifact metadata, frozen protocol docs, matching `CHANGELOG.md` conformance entries, and latest import provenance when present.
 - `verify` checks local CAS bytes, envelope/payload/proof CIDs, the signature, matching local signer identity material, and optional local trust policy over signer, protocol, and import source.
-- `inspect --json`, `verify --json`, `reconcile --json`, `report --json`, and `doctor --json` provide machine-readable output for automation.
+- `inspect --json`, `verify --json`, `reconcile --json`, `report --json`, `doctor --json`, and the identity JSON modes are covered by the local `cli-json-v1` automation contract documented in `docs/machine-readable-contracts.md`.
 - `inspect` and `verify` now show whether an artifact was signed by the active key, an archived local key, or imported signer support.
 - `status --json` now provides machine-readable repo and exchange summaries for automation.
 - `export` writes a portable bundle containing the artifact index row, envelope bytes, related projection rows, and available signer/protocol support material.

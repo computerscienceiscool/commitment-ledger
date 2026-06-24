@@ -5,6 +5,9 @@
 This file explains what the local `verify` command proves today, and what it
 does not prove.
 
+For the machine-readable output contract of `verify --json`, use
+`docs/machine-readable-contracts.md` as the versioned reference.
+
 ## What `verify` Checks
 
 When you run:

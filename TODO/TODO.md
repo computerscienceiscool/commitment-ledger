@@ -16,7 +16,7 @@ Retrospective note:
 - [x] TODO-ramuk - Add imported support backup and restore (`TODO/TODO-ramuk-add-imported-support-backup-and-restore.md`)
 - [x] TODO-fesob - Add bundle-path loss recovery (`TODO/TODO-fesob-add-bundle-path-loss-recovery.md`)
 - [x] TODO-lutav - Add richer exchange analytics (`TODO/TODO-lutav-add-richer-exchange-analytics.md`)
-- [ ] TODO-pivok - Add machine-readable contract documentation and versioning (`TODO/TODO-pivok-add-machine-readable-contract-documentation-and-versioning.md`)
+- [x] TODO-pivok - Add machine-readable contract documentation and versioning (`TODO/TODO-pivok-add-machine-readable-contract-documentation-and-versioning.md`)
 - [ ] TODO-mesad - Update demo and operator videos (`TODO/TODO-mesad-update-demo-and-operator-videos.md`)
 - [ ] TODO-qatig - Update the site (`TODO/TODO-qatig-update-the-site.md`)
 - [ ] TODO-dorun - Update documentation (`TODO/TODO-dorun-update-documentation.md`)
