@@ -60,3 +60,34 @@ func TestStoreWritesJSONLAndMarkdown(t *testing.T) {
 		t.Fatalf("got %d evidence items, want 1", len(items))
 	}
 }
+
+func TestLoadLatestWorkItemsDropsRemovedTargets(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+
+	initial := []model.WorkItem{
+		{Repo: "repo", Branch: "main", WorkID: "TODO-ravud", Status: "open"},
+		{Repo: "repo", Branch: "main", WorkID: "TODO-ravud/1", ParentWork: "TODO-ravud", Status: "open", IsSubtask: true},
+	}
+	if err := store.AppendWorkItems(initial); err != nil {
+		t.Fatalf("append initial work items: %v", err)
+	}
+
+	removed := []model.WorkItem{
+		{Repo: "repo", Branch: "main", WorkID: "TODO-ravud/1", ParentWork: "TODO-ravud", Status: "open", IsSubtask: true, Removed: true},
+	}
+	if err := store.AppendWorkItems(removed); err != nil {
+		t.Fatalf("append removed work item: %v", err)
+	}
+
+	items, err := store.LoadLatestWorkItems()
+	if err != nil {
+		t.Fatalf("load latest work items: %v", err)
+	}
+	if _, ok := items["repo/main/TODO-ravud/1"]; ok {
+		t.Fatal("expected removed subtask to be absent from latest work items")
+	}
+	if _, ok := items["repo/main/TODO-ravud"]; !ok {
+		t.Fatal("expected parent TODO to remain present")
+	}
+}

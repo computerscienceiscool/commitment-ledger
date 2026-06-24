@@ -59,3 +59,26 @@ func TestFindWorkSummaryUsesParentStatusForSubtaskQueries(t *testing.T) {
 		t.Fatalf("status = %q, want parent status open", summary.Status)
 	}
 }
+
+func TestPersonSummariesCountAllTerminalOutcomes(t *testing.T) {
+	commitments := map[string]model.Commitment{
+		"a": {Promiser: "Alice", Status: model.StatusOpen},
+		"b": {Promiser: "Alice", Status: model.StatusKept},
+		"c": {Promiser: "Alice", Status: model.StatusPartiallyKept},
+		"d": {Promiser: "Alice", Status: model.StatusExpiredUnassessed},
+		"e": {Promiser: "Alice", Status: model.StatusBroken},
+		"f": {Promiser: "Alice", Status: model.StatusRefused},
+		"g": {Promiser: "Alice", Status: model.StatusDelegated},
+		"h": {Promiser: "Alice", Status: model.StatusSuperseded},
+		"i": {Promiser: "Alice", Status: model.StatusExtended},
+	}
+
+	summaries := PersonSummaries(commitments)
+	if len(summaries) != 1 {
+		t.Fatalf("got %d summaries, want 1", len(summaries))
+	}
+	got := summaries[0]
+	if got.OpenCommitments != 1 || got.Kept != 1 || got.PartiallyKept != 1 || got.ExpiredUnassessed != 1 || got.Broken != 1 || got.Refused != 1 || got.Delegated != 1 || got.Superseded != 1 || got.Extended != 1 {
+		t.Fatalf("unexpected person summary counts: %+v", got)
+	}
+}

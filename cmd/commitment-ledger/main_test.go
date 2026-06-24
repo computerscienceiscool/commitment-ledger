@@ -326,6 +326,97 @@ func TestRunAssessRejectsKeptForIncompleteParentTarget(t *testing.T) {
 	}
 }
 
+func TestRunScanRemovesMissingTargetsFromLatestWorkItems(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(root, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+
+	now := time.Date(2026, 6, 24, 10, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(root, store, registry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan initial: %v", err)
+	}
+
+	if err := removeFixtureDetailFile(repoPath); err != nil {
+		t.Fatalf("remove detail file: %v", err)
+	}
+	gitCommitAll(t, repoPath, "Remove detail file")
+
+	if err := runScan(root, store, registry, now.Add(time.Minute), []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan second: %v", err)
+	}
+
+	workItems, err := store.LoadLatestWorkItems()
+	if err != nil {
+		t.Fatalf("LoadLatestWorkItems: %v", err)
+	}
+	if _, ok := workItems["fixture/main/TODO-ravud/1"]; ok {
+		t.Fatal("expected removed subtask to be absent after second scan")
+	}
+	if _, ok := workItems["fixture/main/TODO-ravud"]; !ok {
+		t.Fatal("expected parent target to remain after second scan")
+	}
+}
+
+func TestRunReportPromiserShowsAllTerminalOutcomes(t *testing.T) {
+	store := ledger.NewStore(t.TempDir())
+	items := []model.Commitment{
+		{CommitmentID: "a", Promiser: "Alice", Status: model.StatusOpen},
+		{CommitmentID: "b", Promiser: "Alice", Status: model.StatusKept},
+		{CommitmentID: "c", Promiser: "Alice", Status: model.StatusPartiallyKept},
+		{CommitmentID: "d", Promiser: "Alice", Status: model.StatusExpiredUnassessed},
+		{CommitmentID: "e", Promiser: "Alice", Status: model.StatusBroken},
+		{CommitmentID: "f", Promiser: "Alice", Status: model.StatusRefused},
+		{CommitmentID: "g", Promiser: "Alice", Status: model.StatusDelegated},
+		{CommitmentID: "h", Promiser: "Alice", Status: model.StatusSuperseded},
+		{CommitmentID: "i", Promiser: "Alice", Status: model.StatusExtended},
+	}
+	for _, item := range items {
+		if err := store.AppendCommitment(item); err != nil {
+			t.Fatalf("append commitment %s: %v", item.CommitmentID, err)
+		}
+	}
+
+	out := captureStdout(t, func() error {
+		return runReport(store, []string{"--promiser", "Alice"})
+	})
+	for _, fragment := range []string{
+		"Promiser: Alice",
+		"Open commitments: 1",
+		"Kept: 1",
+		"Partially kept: 1",
+		"Expired unassessed: 1",
+		"Broken: 1",
+		"Refused: 1",
+		"Delegated: 1",
+		"Superseded: 1",
+		"Extended: 1",
+	} {
+		if !strings.Contains(out, fragment) {
+			t.Fatalf("report output missing %q:\n%s", fragment, out)
+		}
+	}
+}
+
 func TestConformanceArtifactDistinguishesClaimedEmittedAndHistoricalProtocols(t *testing.T) {
 	root := t.TempDir()
 	copyProtocolDocs(t, root)
@@ -449,6 +540,19 @@ func gitCommitAll(t *testing.T, repoPath string, message string) {
 	t.Helper()
 	runGit(t, repoPath, "add", "TODO/TODO.md", "TODO/TODO-ravud-ship-welcome-flow.md")
 	runGit(t, repoPath, "commit", "-m", message)
+}
+
+func removeFixtureDetailFile(repoPath string) error {
+	indexPath := filepath.Join(repoPath, "TODO", "TODO.md")
+	detailPath := filepath.Join(repoPath, "TODO", "TODO-ravud-ship-welcome-flow.md")
+	index := "# TODO Index\n\n- [ ] TODO-ravud - Ship welcome flow\n"
+	if err := os.WriteFile(indexPath, []byte(index), 0o644); err != nil {
+		return err
+	}
+	if err := os.Remove(detailPath); err != nil {
+		return err
+	}
+	return nil
 }
 
 func runGit(t *testing.T, repoPath string, args ...string) {

@@ -115,7 +115,14 @@ func runScan(root string, store *ledger.Store, registry protocol.Registry, now t
 		if err != nil {
 			return err
 		}
-		if err := store.AppendWorkItems(items); err != nil {
+		currentTargets := make(map[string]struct{}, len(items))
+		for _, item := range items {
+			currentTargets[model.WorkTarget(item.Repo, item.Branch, item.WorkID)] = struct{}{}
+		}
+
+		removed := removedWorkItems(repoCfg.Name, state.Branch, state.Commit, now, prior, currentTargets)
+		persisted := append(append([]model.WorkItem(nil), items...), removed...)
+		if err := store.AppendWorkItems(persisted); err != nil {
 			return err
 		}
 
@@ -166,6 +173,27 @@ func runScan(root string, store *ledger.Store, registry protocol.Registry, now t
 	}
 
 	return nil
+}
+
+func removedWorkItems(repo string, branch string, commit string, now time.Time, prior map[string]model.WorkItem, currentTargets map[string]struct{}) []model.WorkItem {
+	var removed []model.WorkItem
+	seenAt := now.Format(time.RFC3339)
+	for target, item := range prior {
+		if item.Repo != repo || item.Branch != branch {
+			continue
+		}
+		if _, ok := currentTargets[target]; ok {
+			continue
+		}
+		item.Commit = commit
+		item.LastSeen = seenAt
+		item.Removed = true
+		removed = append(removed, item)
+	}
+	sort.Slice(removed, func(i, j int) bool {
+		return removed[i].WorkID < removed[j].WorkID
+	})
+	return removed
 }
 
 func runStatus(store *ledger.Store) error {
@@ -463,6 +491,10 @@ func runReport(store *ledger.Store, args []string) error {
 			fmt.Printf("Partially kept: %d\n", item.PartiallyKept)
 			fmt.Printf("Expired unassessed: %d\n", item.ExpiredUnassessed)
 			fmt.Printf("Broken: %d\n", item.Broken)
+			fmt.Printf("Refused: %d\n", item.Refused)
+			fmt.Printf("Delegated: %d\n", item.Delegated)
+			fmt.Printf("Superseded: %d\n", item.Superseded)
+			fmt.Printf("Extended: %d\n", item.Extended)
 			return nil
 		}
 		return fmt.Errorf("no commitments for promiser %q", *promiser)

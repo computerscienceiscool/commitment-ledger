@@ -46,6 +46,7 @@ type WorkItem struct {
 	FirstSeen  string `json:"first_seen"`
 	LastSeen   string `json:"last_seen"`
 	IsSubtask  bool   `json:"is_subtask,omitempty"`
+	Removed    bool   `json:"removed,omitempty"`
 }
 
 type Commitment struct {

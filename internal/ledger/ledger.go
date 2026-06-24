@@ -47,7 +47,12 @@ func (s *Store) LoadLatestWorkItems() (map[string]model.WorkItem, error) {
 		if err := json.Unmarshal(line, &item); err != nil {
 			return fmt.Errorf("decode work item: %w", err)
 		}
-		items[model.WorkTarget(item.Repo, item.Branch, item.WorkID)] = item
+		target := model.WorkTarget(item.Repo, item.Branch, item.WorkID)
+		if item.Removed {
+			delete(items, target)
+			return nil
+		}
+		items[target] = item
 		return nil
 	})
 	return items, err

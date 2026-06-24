@@ -31,6 +31,10 @@ type PersonSummary struct {
 	PartiallyKept     int
 	ExpiredUnassessed int
 	Broken            int
+	Refused           int
+	Delegated         int
+	Superseded        int
+	Extended          int
 }
 
 type WorkSummary struct {
@@ -120,6 +124,14 @@ func PersonSummaries(commitments map[string]model.Commitment) []PersonSummary {
 			summary.ExpiredUnassessed++
 		case model.StatusBroken:
 			summary.Broken++
+		case model.StatusRefused:
+			summary.Refused++
+		case model.StatusDelegated:
+			summary.Delegated++
+		case model.StatusSuperseded:
+			summary.Superseded++
+		case model.StatusExtended:
+			summary.Extended++
 		}
 	}
 	out := make([]PersonSummary, 0, len(summaries))
