@@ -18,9 +18,10 @@ COMMIT_ARGS ?=
 EVIDENCE_ARGS ?=
 ASSESS_ARGS ?=
 INSPECT_ARGS ?=
+VERIFY_ARGS ?=
 TODO_REPOS := alice-demo bob-demo dave-demo mallory-demo
 
-.PHONY: help fmt test build check clean cli scan status report inspect conformance expire commit evidence assess \
+.PHONY: help fmt test build check clean cli scan status report inspect verify conformance expire commit evidence assess \
 	demo-init demo-seed demo-config demo-setup demo-scan demo-status demo-report
 
 help:
@@ -39,6 +40,7 @@ help:
 	@echo "  make status"
 	@echo "  make report REPORT_ARGS='--promiser Alice'"
 	@echo "  make inspect INSPECT_ARGS='COMMITMENT-...'"
+	@echo "  make verify VERIFY_ARGS='COMMITMENT-...'"
 	@echo "  make conformance VERSION=$(VERSION) SIGNER=$(SIGNER)"
 	@echo "  make expire"
 	@echo "  make commit COMMIT_ARGS='--promiser Alice --repo alice-demo --branch main --target alice-demo/main/TODO-ravud/1 --due 2026-07-01 --promise ...'"
@@ -81,6 +83,9 @@ report:
 
 inspect:
 	@$(RUN) inspect $(INSPECT_ARGS)
+
+verify:
+	@$(RUN) verify $(VERIFY_ARGS)
 
 conformance:
 	@$(RUN) conformance --signer $(SIGNER) --version $(VERSION)

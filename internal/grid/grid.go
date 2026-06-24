@@ -32,6 +32,17 @@ type Artifact struct {
 	EnvelopeCID  string
 }
 
+type DecodedArtifact struct {
+	ProtocolPCID string
+	PayloadBytes []byte
+	PayloadCID   string
+	ProofBytes   []byte
+	ProofCID     string
+	Proof        Proof
+	Envelope     []byte
+	EnvelopeCID  string
+}
+
 func Build(protocolPCID string, payload []byte, signer string, keyID string, publicKey ed25519.PublicKey, privateKey ed25519.PrivateKey) (Artifact, error) {
 	signable, err := encodeSignable(protocolPCID, payload)
 	if err != nil {
@@ -64,10 +75,14 @@ func Build(protocolPCID string, payload []byte, signer string, keyID string, pub
 }
 
 func Verify(protocolPCID string, payload []byte, proofBytes []byte) error {
-	var proof Proof
-	if err := json.Unmarshal(proofBytes, &proof); err != nil {
-		return fmt.Errorf("unmarshal proof: %w", err)
+	proof, err := ParseProof(proofBytes)
+	if err != nil {
+		return err
 	}
+	return VerifyWithProof(protocolPCID, payload, proof, proofBytes)
+}
+
+func VerifyWithProof(protocolPCID string, payload []byte, proof Proof, proofBytes []byte) error {
 	publicKey, err := base64.StdEncoding.DecodeString(proof.PublicKey)
 	if err != nil {
 		return fmt.Errorf("decode public key: %w", err)
@@ -84,6 +99,169 @@ func Verify(protocolPCID string, payload []byte, proofBytes []byte) error {
 		return fmt.Errorf("signature verification failed")
 	}
 	return nil
+}
+
+func ParseProof(proofBytes []byte) (Proof, error) {
+	var proof Proof
+	if err := json.Unmarshal(proofBytes, &proof); err != nil {
+		return Proof{}, fmt.Errorf("unmarshal proof: %w", err)
+	}
+	return proof, nil
+}
+
+func DecodeEnvelope(envelope []byte) (DecodedArtifact, error) {
+	offset := 0
+	tag, err := decodeTag(envelope, &offset)
+	if err != nil {
+		return DecodedArtifact{}, err
+	}
+	if tag != gridTag {
+		return DecodedArtifact{}, fmt.Errorf("unexpected outer tag %d", tag)
+	}
+	count, err := decodeArrayHeader(envelope, &offset)
+	if err != nil {
+		return DecodedArtifact{}, err
+	}
+	if count != 3 {
+		return DecodedArtifact{}, fmt.Errorf("unexpected envelope item count %d", count)
+	}
+	selectorTag, err := decodeTag(envelope, &offset)
+	if err != nil {
+		return DecodedArtifact{}, err
+	}
+	if selectorTag != pcidTag {
+		return DecodedArtifact{}, fmt.Errorf("unexpected protocol selector tag %d", selectorTag)
+	}
+	protocolPCID, err := decodeText(envelope, &offset)
+	if err != nil {
+		return DecodedArtifact{}, err
+	}
+	payload, err := decodeBytes(envelope, &offset)
+	if err != nil {
+		return DecodedArtifact{}, err
+	}
+	proofBytes, err := decodeBytes(envelope, &offset)
+	if err != nil {
+		return DecodedArtifact{}, err
+	}
+	if offset != len(envelope) {
+		return DecodedArtifact{}, fmt.Errorf("unexpected trailing bytes in envelope")
+	}
+	proof, err := ParseProof(proofBytes)
+	if err != nil {
+		return DecodedArtifact{}, err
+	}
+	return DecodedArtifact{
+		ProtocolPCID: protocolPCID,
+		PayloadBytes: append([]byte(nil), payload...),
+		PayloadCID:   cid.Sum(payload),
+		ProofBytes:   append([]byte(nil), proofBytes...),
+		ProofCID:     cid.Sum(proofBytes),
+		Proof:        proof,
+		Envelope:     append([]byte(nil), envelope...),
+		EnvelopeCID:  cid.Sum(envelope),
+	}, nil
+}
+
+func decodeTag(data []byte, offset *int) (uint64, error) {
+	major, value, err := decodeHead(data, offset)
+	if err != nil {
+		return 0, err
+	}
+	if major != 6 {
+		return 0, fmt.Errorf("expected tag major type, got %d", major)
+	}
+	return value, nil
+}
+
+func decodeArrayHeader(data []byte, offset *int) (uint64, error) {
+	major, value, err := decodeHead(data, offset)
+	if err != nil {
+		return 0, err
+	}
+	if major != 4 {
+		return 0, fmt.Errorf("expected array major type, got %d", major)
+	}
+	return value, nil
+}
+
+func decodeText(data []byte, offset *int) (string, error) {
+	major, size, err := decodeHead(data, offset)
+	if err != nil {
+		return "", err
+	}
+	if major != 3 {
+		return "", fmt.Errorf("expected text major type, got %d", major)
+	}
+	bytes, err := take(data, offset, size)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
+}
+
+func decodeBytes(data []byte, offset *int) ([]byte, error) {
+	major, size, err := decodeHead(data, offset)
+	if err != nil {
+		return nil, err
+	}
+	if major != 2 {
+		return nil, fmt.Errorf("expected bytes major type, got %d", major)
+	}
+	return take(data, offset, size)
+}
+
+func decodeHead(data []byte, offset *int) (byte, uint64, error) {
+	if *offset >= len(data) {
+		return 0, 0, fmt.Errorf("unexpected end of data")
+	}
+	b := data[*offset]
+	*offset = *offset + 1
+	major := b >> 5
+	additional := b & 0x1f
+	switch {
+	case additional <= 23:
+		return major, uint64(additional), nil
+	case additional == 24:
+		bytes, err := take(data, offset, 1)
+		if err != nil {
+			return 0, 0, err
+		}
+		return major, uint64(bytes[0]), nil
+	case additional == 25:
+		bytes, err := take(data, offset, 2)
+		if err != nil {
+			return 0, 0, err
+		}
+		return major, uint64(bytes[0])<<8 | uint64(bytes[1]), nil
+	case additional == 26:
+		bytes, err := take(data, offset, 4)
+		if err != nil {
+			return 0, 0, err
+		}
+		return major, uint64(bytes[0])<<24 | uint64(bytes[1])<<16 | uint64(bytes[2])<<8 | uint64(bytes[3]), nil
+	case additional == 27:
+		bytes, err := take(data, offset, 8)
+		if err != nil {
+			return 0, 0, err
+		}
+		return major,
+			uint64(bytes[0])<<56 | uint64(bytes[1])<<48 | uint64(bytes[2])<<40 | uint64(bytes[3])<<32 |
+				uint64(bytes[4])<<24 | uint64(bytes[5])<<16 | uint64(bytes[6])<<8 | uint64(bytes[7]),
+			nil
+	default:
+		return 0, 0, fmt.Errorf("unsupported additional info %d", additional)
+	}
+}
+
+func take(data []byte, offset *int, size uint64) ([]byte, error) {
+	end := *offset + int(size)
+	if end < *offset || end > len(data) {
+		return nil, fmt.Errorf("unexpected end of data")
+	}
+	out := append([]byte(nil), data[*offset:end]...)
+	*offset = end
+	return out, nil
 }
 
 func encodeEnvelope(protocolPCID string, payload []byte, proof []byte) ([]byte, error) {

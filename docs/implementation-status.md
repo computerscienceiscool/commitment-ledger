@@ -58,4 +58,5 @@ instead of reading projection files directly first:
 - `status` for repo-level summary
 - `report` for filtered views
 - `inspect` for artifact and record lookup
+- `verify` for local artifact and signer-material verification
 - `docs/operator-guide.md` for normal workflow and troubleshooting

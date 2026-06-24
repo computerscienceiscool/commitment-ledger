@@ -22,6 +22,7 @@ make scan CONFIG=config/repos.json
 make status
 make report REPORT_ARGS='--promiser Alice'
 make inspect INSPECT_ARGS='COMMITMENT-...'
+make verify VERIFY_ARGS='COMMITMENT-...'
 ```
 
 For the seeded demo workflow:
@@ -151,6 +152,26 @@ It prints:
 - related local record path when one exists
 - current projected status or evidence details
 
+### `verify`
+
+```bash
+go run ./cmd/commitment-ledger verify COMMITMENT-...
+go run ./cmd/commitment-ledger verify EVIDENCE-...
+go run ./cmd/commitment-ledger verify ASSESSMENT-...
+go run ./cmd/commitment-ledger verify bafy...
+```
+
+`verify` resolves the same reference types as `inspect`, then checks:
+
+- the artifact bytes can be loaded from local CAS
+- the envelope decodes to the indexed protocol, payload, and proof
+- the derived envelope, payload, and proof CIDs match the artifact index row
+- the signature verifies over the carried protocol selector and payload
+- the signer and key ID match local identity material under `config/identities/`
+
+It also tells you whether the artifact's `protocol_pcid` matches a local frozen
+protocol doc.
+
 ## Local State Layout
 
 ### `data/`
@@ -259,3 +280,29 @@ scan instead of keeping them alive forever.
 This is expected today. Evidence is projected into `data/evidence.jsonl` and
 the associated commitment Markdown record, but not into a standalone
 `records/evidence/` tree yet.
+
+### `verify` fails to load signer identity
+
+Cause:
+
+- the artifact signer exists in the proof, but there is no matching local
+  identity file under `config/identities/`
+
+What to do:
+
+- confirm you are in the repo that originally emitted the artifact
+- check `config/identities/`
+- use `inspect` to confirm the signer name carried in the proof
+
+### `verify` says signer identity mismatch
+
+Cause:
+
+- the artifact proof was signed by a different key than the local identity file
+- or the local identity file has changed since the artifact was emitted
+
+What to do:
+
+- inspect the artifact and signer identity carefully
+- treat this as a real trust/integrity problem, not a display issue
+- see `docs/trust-and-verification.md` for the trust model limits

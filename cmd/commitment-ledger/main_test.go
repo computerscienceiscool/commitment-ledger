@@ -280,6 +280,52 @@ func TestLifecycleFlowUsesV2EvidenceAndAssessmentProtocols(t *testing.T) {
 		}
 	}
 
+	verifyCommitment := captureStdout(t, func() error {
+		return runVerify(root, store, registry, []string{current.CommitmentID})
+	})
+	for _, fragment := range []string{
+		"Kind: commitment_promise",
+		"Envelope CID Verified: yes",
+		"Signature Verified: yes",
+		"Signer Identity Verified: yes",
+		"Protocol: " + protocol.CommitmentPromise,
+		"Local Protocol Match: yes",
+	} {
+		if !strings.Contains(verifyCommitment, fragment) {
+			t.Fatalf("commitment verify output missing %q:\n%s", fragment, verifyCommitment)
+		}
+	}
+
+	verifyEvidence := captureStdout(t, func() error {
+		return runVerify(root, store, registry, []string{checkedEvidence.EvidenceID})
+	})
+	for _, fragment := range []string{
+		"Kind: commitment_evidence",
+		"Envelope CID Verified: yes",
+		"Signature Verified: yes",
+		"Signer Identity Verified: yes",
+		"Protocol: " + protocol.CommitmentEvidence,
+	} {
+		if !strings.Contains(verifyEvidence, fragment) {
+			t.Fatalf("evidence verify output missing %q:\n%s", fragment, verifyEvidence)
+		}
+	}
+
+	verifyAssessment := captureStdout(t, func() error {
+		return runVerify(root, store, registry, []string{assessment.AssessmentID})
+	})
+	for _, fragment := range []string{
+		"Kind: commitment_assessment",
+		"Envelope CID Verified: yes",
+		"Signature Verified: yes",
+		"Signer Identity Verified: yes",
+		"Protocol: " + protocol.CommitmentAssessment,
+	} {
+		if !strings.Contains(verifyAssessment, fragment) {
+			t.Fatalf("assessment verify output missing %q:\n%s", fragment, verifyAssessment)
+		}
+	}
+
 	reportOut := captureStdout(t, func() error {
 		return runReport(store, []string{"--promiser", "Alice"})
 	})
@@ -426,6 +472,21 @@ func TestRunInspectRejectsUnknownReference(t *testing.T) {
 	err = runInspect(root, store, registry, []string{"does-not-exist"})
 	if err == nil || !strings.Contains(err.Error(), "unknown inspect reference") {
 		t.Fatalf("runInspect error = %v, want unknown inspect reference", err)
+	}
+}
+
+func TestRunVerifyRejectsUnknownReference(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	err = runVerify(root, store, registry, []string{"does-not-exist"})
+	if err == nil || !strings.Contains(err.Error(), "unknown verify reference") {
+		t.Fatalf("runVerify error = %v, want unknown verify reference", err)
 	}
 }
 

@@ -50,6 +50,7 @@ commitment-ledger expire
 commitment-ledger status
 commitment-ledger report --promiser JJ
 commitment-ledger inspect COMMITMENT-...
+commitment-ledger verify COMMITMENT-...
 ```
 
 ## Make Targets
@@ -68,6 +69,7 @@ Common targets:
 - `make scan CONFIG=config/repos.json`: scan a configured repo set
 - `make report REPORT_ARGS='--promiser Alice'`: run a filtered report
 - `make inspect INSPECT_ARGS='COMMITMENT-...'`: inspect a commitment ID, evidence ID, assessment ID, or artifact CID
+- `make verify VERIFY_ARGS='COMMITMENT-...'`: verify a commitment ID, evidence ID, assessment ID, or artifact CID against local CAS bytes and signer material
 - `make conformance VERSION=v0.1.0 SIGNER=commitment-ledger`: emit a local conformance claim
 
 Demo-oriented targets:
@@ -120,12 +122,14 @@ Observed work targets are always branch-qualified, for example
 - JSONL and Markdown files are projections over those raw artifacts.
 - Repo status summaries surface kept and non-kept terminal outcomes separately.
 - `inspect` resolves commitment IDs, evidence IDs, assessment IDs, and artifact CIDs back to their local artifact metadata and frozen protocol docs.
+- `verify` checks local CAS bytes, envelope/payload/proof CIDs, the signature, and matching local signer identity material for a referenced artifact.
 
 ## Demo Docs
 
 - `docs/demo-plan.md` lays out a real-repo demo using Alice, Bob, Dave, and Mallory roles.
 - `docs/demo-script.md` is the spoken walkthrough with commands, files, and demo narration.
 - `docs/operator-guide.md` is the practical runbook for local operation, inspection, and troubleshooting.
+- `docs/trust-and-verification.md` explains what local artifact verification proves and what it does not prove.
 
 ## Version Notes
 

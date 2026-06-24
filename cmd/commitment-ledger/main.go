@@ -61,6 +61,8 @@ func main() {
 		err = runReport(store, os.Args[2:])
 	case "inspect":
 		err = runInspect(root, store, registry, os.Args[2:])
+	case "verify":
+		err = runVerify(root, store, registry, os.Args[2:])
 	default:
 		usage()
 		err = fmt.Errorf("unknown command %q", os.Args[1])
@@ -72,7 +74,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report|inspect> [flags]")
+	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report|inspect|verify> [flags]")
 }
 
 func runScan(root string, store *ledger.Store, registry protocol.Registry, now time.Time, args []string) error {
@@ -567,6 +569,81 @@ func runInspect(root string, store *ledger.Store, registry protocol.Registry, ar
 	return nil
 }
 
+func runVerify(root string, store *ledger.Store, registry protocol.Registry, args []string) error {
+	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("verify requires exactly one reference")
+	}
+	ref := fs.Arg(0)
+
+	artifacts, err := store.LoadArtifacts()
+	if err != nil {
+		return err
+	}
+	commitments, err := store.LoadLatestCommitments()
+	if err != nil {
+		return err
+	}
+	evidenceItems, err := store.LoadEvidence()
+	if err != nil {
+		return err
+	}
+	assessments, err := store.LoadAssessments()
+	if err != nil {
+		return err
+	}
+
+	artifact, err := resolveArtifactReference(ref, artifacts, commitments, evidenceItems, assessments)
+	if err != nil {
+		return err
+	}
+	envelope, err := store.CAS.Get(artifact.ArtifactCID)
+	if err != nil {
+		return err
+	}
+	decoded, err := grid.DecodeEnvelope(envelope)
+	if err != nil {
+		return err
+	}
+	if decoded.EnvelopeCID != artifact.ArtifactCID {
+		return fmt.Errorf("artifact cid mismatch: index=%s decoded=%s", artifact.ArtifactCID, decoded.EnvelopeCID)
+	}
+	if decoded.ProtocolPCID != artifact.ProtocolPCID {
+		return fmt.Errorf("protocol pCID mismatch: index=%s decoded=%s", artifact.ProtocolPCID, decoded.ProtocolPCID)
+	}
+	if decoded.PayloadCID != artifact.PayloadCID {
+		return fmt.Errorf("payload cid mismatch: index=%s decoded=%s", artifact.PayloadCID, decoded.PayloadCID)
+	}
+	if decoded.ProofCID != artifact.ProofCID {
+		return fmt.Errorf("proof cid mismatch: index=%s decoded=%s", artifact.ProofCID, decoded.ProofCID)
+	}
+	if decoded.Proof.Signer != artifact.Signer {
+		return fmt.Errorf("signer mismatch: index=%s proof=%s", artifact.Signer, decoded.Proof.Signer)
+	}
+	if decoded.Proof.KeyID != artifact.SignerKeyID {
+		return fmt.Errorf("signer key mismatch: index=%s proof=%s", artifact.SignerKeyID, decoded.Proof.KeyID)
+	}
+	ident, _, _, err := identity.Load(root, decoded.Proof.Signer)
+	if err != nil {
+		return fmt.Errorf("load signer identity %q: %w", decoded.Proof.Signer, err)
+	}
+	if ident.KeyID != decoded.Proof.KeyID {
+		return fmt.Errorf("local identity key mismatch: identity=%s proof=%s", ident.KeyID, decoded.Proof.KeyID)
+	}
+	if ident.PublicKey != decoded.Proof.PublicKey {
+		return fmt.Errorf("local identity public key mismatch for signer %q", decoded.Proof.Signer)
+	}
+	if err := grid.Verify(decoded.ProtocolPCID, decoded.PayloadBytes, decoded.ProofBytes); err != nil {
+		return err
+	}
+
+	printVerifyResult(registry, artifact, decoded, ident)
+	return nil
+}
+
 type inspectView struct {
 	Reference    string
 	Kind         string
@@ -586,10 +663,7 @@ type inspectView struct {
 }
 
 func inspectReference(root string, registry protocol.Registry, ref string, artifacts []model.ArtifactRecord, commitments map[string]model.Commitment, evidenceItems []model.Evidence, assessments []model.Assessment) (inspectView, error) {
-	artifactByCID := make(map[string]model.ArtifactRecord, len(artifacts))
-	for _, item := range artifacts {
-		artifactByCID[item.ArtifactCID] = item
-	}
+	artifactByCID := artifactIndexByCID(artifacts)
 
 	if item, ok := commitments[ref]; ok {
 		return buildCommitmentInspectView(root, registry, ref, item, artifactByCID[item.ArtifactCID]), nil
@@ -627,6 +701,41 @@ func inspectReference(root string, registry protocol.Registry, ref string, artif
 	}
 
 	return inspectView{}, fmt.Errorf("unknown inspect reference %q", ref)
+}
+
+func artifactIndexByCID(artifacts []model.ArtifactRecord) map[string]model.ArtifactRecord {
+	out := make(map[string]model.ArtifactRecord, len(artifacts))
+	for _, item := range artifacts {
+		out[item.ArtifactCID] = item
+	}
+	return out
+}
+
+func resolveArtifactReference(ref string, artifacts []model.ArtifactRecord, commitments map[string]model.Commitment, evidenceItems []model.Evidence, assessments []model.Assessment) (model.ArtifactRecord, error) {
+	artifactByCID := artifactIndexByCID(artifacts)
+	if artifact, ok := artifactByCID[ref]; ok {
+		return artifact, nil
+	}
+	if item, ok := commitments[ref]; ok && item.ArtifactCID != "" {
+		if artifact, ok := artifactByCID[item.ArtifactCID]; ok {
+			return artifact, nil
+		}
+	}
+	for _, item := range evidenceItems {
+		if item.EvidenceID == ref && item.ArtifactCID != "" {
+			if artifact, ok := artifactByCID[item.ArtifactCID]; ok {
+				return artifact, nil
+			}
+		}
+	}
+	for _, item := range assessments {
+		if item.AssessmentID == ref && item.ArtifactCID != "" {
+			if artifact, ok := artifactByCID[item.ArtifactCID]; ok {
+				return artifact, nil
+			}
+		}
+	}
+	return model.ArtifactRecord{}, fmt.Errorf("unknown verify reference %q", ref)
 }
 
 func buildCommitmentInspectView(root string, registry protocol.Registry, ref string, item model.Commitment, artifact model.ArtifactRecord) inspectView {
@@ -755,6 +864,46 @@ func emptyFallback(value string, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func printVerifyResult(registry protocol.Registry, artifact model.ArtifactRecord, decoded grid.DecodedArtifact, ident identity.Identity) {
+	spec, ok := registry.FindByPCID(decoded.ProtocolPCID)
+	fmt.Printf("Reference: %s\n", emptyFallback(artifact.RelatedID, artifact.ArtifactCID))
+	fmt.Printf("Kind: %s\n", emptyFallback(artifact.Kind, "(unknown)"))
+	fmt.Printf("Artifact CID: %s\n", artifact.ArtifactCID)
+	fmt.Printf("Envelope CID Verified: yes\n")
+	fmt.Printf("Payload CID Verified: yes\n")
+	fmt.Printf("Proof CID Verified: yes\n")
+	fmt.Printf("Signature Verified: yes\n")
+	fmt.Printf("Signer Identity Verified: yes\n")
+	fmt.Printf("Signer: %s\n", decoded.Proof.Signer)
+	fmt.Printf("Signer Key ID: %s\n", decoded.Proof.KeyID)
+	fmt.Printf("Local Identity File: %s\n", identityPathForName(decoded.Proof.Signer))
+	fmt.Printf("Protocol pCID: %s\n", decoded.ProtocolPCID)
+	if ok {
+		fmt.Printf("Local Protocol Match: yes\n")
+		fmt.Printf("Protocol: %s\n", spec.Name)
+		fmt.Printf("Protocol Doc: %s\n", spec.Path)
+	} else {
+		fmt.Printf("Local Protocol Match: no\n")
+	}
+	fmt.Printf("Payload CID: %s\n", decoded.PayloadCID)
+	fmt.Printf("Proof CID: %s\n", decoded.ProofCID)
+	fmt.Printf("Observed At: %s\n", emptyFallback(artifact.ObservedAt, "(none)"))
+	_ = ident
+}
+
+func identityPathForName(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() == 0 {
+		b.WriteString("anon")
+	}
+	return filepath.Join("config", "identities", b.String()+".json")
 }
 
 func emitCommitmentArtifact(root string, store *ledger.Store, registry protocol.Registry, item model.Commitment, promisee string) (model.Commitment, error) {
