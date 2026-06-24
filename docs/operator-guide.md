@@ -179,6 +179,7 @@ go run ./cmd/commitment-ledger inspect --json COMMITMENT-...
 - commitment IDs
 - evidence IDs
 - assessment IDs
+- receipt IDs
 - artifact CIDs
 
 It prints:
@@ -188,6 +189,7 @@ It prints:
 - local frozen protocol doc path
 - matching `CHANGELOG.md` conformance entries when the protocol is claimed there
 - signer and signer key ID
+- signer key state and matching local identity path when available
 - payload and proof CIDs
 - related local record path when one exists
 - latest import provenance when the artifact entered this repo through `import` or `receive`
@@ -213,12 +215,15 @@ go run ./cmd/commitment-ledger verify --json COMMITMENT-...
 - the envelope decodes to the indexed protocol, payload, and proof
 - the derived envelope, payload, and proof CIDs match the artifact index row
 - the signature verifies over the carried protocol selector and payload
-- the signer and key ID match local identity material under `config/identities/`
+- the signer and key ID match active, archived, or imported local identity material
 
 It also tells you whether the artifact's `protocol_pcid` matches a local frozen
 protocol doc, whether the identity/protocol support came from built-in or
 imported state, the latest recorded import provenance when applicable, and the
-current local trust-policy judgment for signer, protocol, and import source.
+current local trust-policy judgment for signer, protocol, and import source. If
+the artifact was signed before a local key rotation, `verify` will report the
+archived signer key state instead of failing only because the active key has
+changed.
 
 Use `--json` when you need those verification results in a stable
 machine-readable form.
@@ -391,6 +396,7 @@ no longer exist locally.
 ```bash
 go run ./cmd/commitment-ledger identity list --json
 go run ./cmd/commitment-ledger identity show Alice
+go run ./cmd/commitment-ledger identity history Alice --json
 go run ./cmd/commitment-ledger identity rotate --name Alice
 ```
 
@@ -398,6 +404,8 @@ go run ./cmd/commitment-ledger identity rotate --name Alice
 
 - `list` shows primary and imported identities
 - `show` prints the current key ID, path, and public key for one name
+- `history` shows the current key plus archived and imported key material for
+  one signer name
 - `rotate` archives the old private key file under `config/identities/archive/`
   and writes a new keypair to the primary identity path
 
@@ -564,6 +572,7 @@ What to do:
 
 - confirm you are in the repo that originally emitted the artifact
 - check `config/identities/`
+- check `config/identities/archive/` if the signer rotated locally
 - check `config/imported-identities/` if the artifact came from `import`
 - use `inspect` to confirm the signer name carried in the proof
 
@@ -577,6 +586,8 @@ Cause:
 What to do:
 
 - inspect the artifact and signer identity carefully
+- run `identity history NAME --json` to confirm whether the signing key is now
+  archived or only present through imported support
 
 ### `import` or `receive` says `... conflict ...`
 

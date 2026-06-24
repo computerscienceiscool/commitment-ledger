@@ -1588,6 +1588,110 @@ func TestRunIdentityRotateArchivesAndReplacesKey(t *testing.T) {
 	}
 }
 
+func TestRunIdentityHistoryShowsCurrentAndArchivedKeys(t *testing.T) {
+	root := t.TempDir()
+	if _, _, _, err := identity.LoadOrCreate(root, "Alice"); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+	if err := runIdentity(root, []string{"rotate", "--name", "Alice"}); err != nil {
+		t.Fatalf("runIdentity rotate: %v", err)
+	}
+
+	textOut := captureStdout(t, func() error {
+		return runIdentity(root, []string{"history", "Alice"})
+	})
+	for _, fragment := range []string{
+		"Name: Alice",
+		"Current Key ID: alice-ed25519-v2",
+		"Archived Keys: 1",
+		"Archived Key: alice-ed25519-v1",
+	} {
+		if !strings.Contains(textOut, fragment) {
+			t.Fatalf("identity history output missing %q:\n%s", fragment, textOut)
+		}
+	}
+
+	jsonOut := captureStdout(t, func() error {
+		return runIdentity(root, []string{"history", "--json", "Alice"})
+	})
+	for _, fragment := range []string{
+		"\"name\": \"Alice\"",
+		"\"key_id\": \"alice-ed25519-v2\"",
+		"\"source\": \"archived\"",
+		"\"key_id\": \"alice-ed25519-v1\"",
+	} {
+		if !strings.Contains(jsonOut, fragment) {
+			t.Fatalf("identity history json output missing %q:\n%s", fragment, jsonOut)
+		}
+	}
+}
+
+func TestVerifyAndInspectUseArchivedSignerKeyAfterRotation(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(root, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+	now := time.Date(2026, 6, 25, 0, 30, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(root, store, registry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan: %v", err)
+	}
+	if err := runCommit(root, store, registry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+	commitment := latestCommitment(t, store)
+	if err := runIdentity(root, []string{"rotate", "--name", "Alice"}); err != nil {
+		t.Fatalf("runIdentity rotate: %v", err)
+	}
+
+	verifyOut := captureStdout(t, func() error {
+		return runVerify(root, store, registry, []string{commitment.CommitmentID})
+	})
+	if !strings.Contains(verifyOut, "Signer Key State: archived") ||
+		!strings.Contains(verifyOut, "Identity Source: archived local identity") {
+		t.Fatalf("unexpected verify output after rotation:\n%s", verifyOut)
+	}
+
+	inspectOut := captureStdout(t, func() error {
+		return runInspect(root, store, registry, []string{commitment.CommitmentID})
+	})
+	if !strings.Contains(inspectOut, "Signer Key State: archived") ||
+		!strings.Contains(inspectOut, "Signer Identity Path: "+filepath.Join(root, "config", "identities", "archive", "alice-alice-ed25519-v1.json")) {
+		t.Fatalf("unexpected inspect output after rotation:\n%s", inspectOut)
+	}
+
+	verifyJSON := captureStdout(t, func() error {
+		return runVerify(root, store, registry, []string{"--json", commitment.CommitmentID})
+	})
+	if !strings.Contains(verifyJSON, "\"signer_key_state\": \"archived\"") {
+		t.Fatalf("verify json output missing archived key state:\n%s", verifyJSON)
+	}
+}
+
 func TestRunRepairRestoresImportedArtifactEnvelope(t *testing.T) {
 	root := t.TempDir()
 	copyProtocolDocs(t, root)

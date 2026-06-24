@@ -58,7 +58,7 @@ help:
 	@echo "  make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'"
 	@echo "  make doctor DOCTOR_ARGS='--repairable'"
 	@echo "  make repair REPAIR_ARGS='--records --protocol-cas --import-artifacts --import-support'"
-	@echo "  make identity IDENTITY_ARGS='list --json'"
+	@echo "  make identity IDENTITY_ARGS='history Alice --json'"
 	@echo "  make conformance VERSION=$(VERSION) SIGNER=$(SIGNER)"
 	@echo "  make conformance-update VERSION=$(VERSION) SIGNER=$(SIGNER)"
 	@echo "  make expire"

@@ -732,21 +732,21 @@ func runVerify(root string, store *ledger.Store, registry protocol.Registry, arg
 	if decoded.Proof.KeyID != artifact.SignerKeyID {
 		return fmt.Errorf("signer key mismatch: index=%s proof=%s", artifact.SignerKeyID, decoded.Proof.KeyID)
 	}
-	ident, _, err := identity.LoadVerifier(root, decoded.Proof.Signer)
+	match, err := resolveIdentityMatch(root, decoded.Proof.Signer, decoded.Proof.KeyID)
 	if err != nil {
 		return fmt.Errorf("load signer identity %q: %w", decoded.Proof.Signer, err)
 	}
-	if ident.KeyID != decoded.Proof.KeyID {
-		return fmt.Errorf("local identity key mismatch: identity=%s proof=%s", ident.KeyID, decoded.Proof.KeyID)
+	if match.Identity.KeyID != decoded.Proof.KeyID {
+		return fmt.Errorf("local identity key mismatch: identity=%s proof=%s", match.Identity.KeyID, decoded.Proof.KeyID)
 	}
-	if ident.PublicKey != decoded.Proof.PublicKey {
+	if match.Identity.PublicKey != decoded.Proof.PublicKey {
 		return fmt.Errorf("local identity public key mismatch for signer %q", decoded.Proof.Signer)
 	}
 	if err := grid.Verify(decoded.ProtocolPCID, decoded.PayloadBytes, decoded.ProofBytes); err != nil {
 		return err
 	}
 
-	result := buildVerifyResult(root, registry, artifact, decoded, ident, latestImportForArtifact(imports, artifact.ArtifactCID), policy)
+	result := buildVerifyResult(root, registry, artifact, decoded, match, latestImportForArtifact(imports, artifact.ArtifactCID), policy)
 	if *jsonOut {
 		return printJSON(result)
 	}
@@ -1120,15 +1120,30 @@ type identityInfo struct {
 	HasPrivate bool   `json:"has_private"`
 }
 
+type identityHistory struct {
+	Name     string         `json:"name"`
+	Current  *identityInfo  `json:"current,omitempty"`
+	Archived []identityInfo `json:"archived,omitempty"`
+	Imported *identityInfo  `json:"imported,omitempty"`
+}
+
+type identityMatch struct {
+	Identity identity.Identity
+	Info     identityInfo
+	KeyState string
+}
+
 func runIdentity(root string, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("identity requires a subcommand: list, show, rotate")
+		return fmt.Errorf("identity requires a subcommand: list, show, history, rotate")
 	}
 	switch args[0] {
 	case "list":
 		return runIdentityList(root, args[1:])
 	case "show":
 		return runIdentityShow(root, args[1:])
+	case "history":
+		return runIdentityHistory(root, args[1:])
 	case "rotate":
 		return runIdentityRotate(root, args[1:])
 	default:
@@ -1177,6 +1192,38 @@ func runIdentityShow(root string, args []string) error {
 	fmt.Printf("Key ID: %s\n", item.KeyID)
 	fmt.Printf("Has Private Key: %s\n", yesNo(item.HasPrivate))
 	fmt.Printf("Public Key: %s\n", item.PublicKey)
+	return nil
+}
+
+func runIdentityHistory(root string, args []string) error {
+	fs := flag.NewFlagSet("identity history", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "emit JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("identity history requires exactly one name")
+	}
+	history, err := loadIdentityHistory(root, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSON(history)
+	}
+	fmt.Printf("Name: %s\n", history.Name)
+	if history.Current != nil {
+		fmt.Printf("Current Key ID: %s\n", history.Current.KeyID)
+		fmt.Printf("Current Path: %s\n", history.Current.Path)
+	}
+	if history.Imported != nil {
+		fmt.Printf("Imported Key ID: %s\n", history.Imported.KeyID)
+		fmt.Printf("Imported Path: %s\n", history.Imported.Path)
+	}
+	fmt.Printf("Archived Keys: %d\n", len(history.Archived))
+	for _, item := range history.Archived {
+		fmt.Printf("Archived Key: %s %s\n", item.KeyID, item.Path)
+	}
 	return nil
 }
 
@@ -1279,6 +1326,25 @@ func listIdentities(root string) ([]identityInfo, error) {
 	return out, nil
 }
 
+func loadIdentityHistory(root string, name string) (identityHistory, error) {
+	history := identityHistory{Name: name}
+	if current, err := loadIdentityInfo(root, name); err == nil && current.Source == "primary" {
+		history.Current = &current
+	}
+	archived, err := loadArchivedIdentityInfos(root, name)
+	if err != nil {
+		return identityHistory{}, err
+	}
+	history.Archived = archived
+	if imported, err := loadImportedIdentityInfo(root, name); err == nil {
+		history.Imported = &imported
+	}
+	if history.Current == nil && history.Imported == nil && len(history.Archived) == 0 {
+		return identityHistory{}, fmt.Errorf("identity %q not found", name)
+	}
+	return history, nil
+}
+
 func listIdentityDir(root string, dir string, source string) ([]identityInfo, error) {
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
@@ -1315,18 +1381,110 @@ func loadIdentityInfo(root string, name string) (identityInfo, error) {
 			HasPrivate: true,
 		}, nil
 	}
+	return loadImportedIdentityInfo(root, name)
+}
+
+func loadImportedIdentityInfo(root string, name string) (identityInfo, error) {
 	ident, _, err := identity.LoadVerifier(root, name)
 	if err != nil {
+		return identityInfo{}, err
+	}
+	path := filepath.Join(root, "config", "imported-identities", importedIdentityFilename(name))
+	if _, err := os.Stat(path); err != nil {
 		return identityInfo{}, err
 	}
 	return identityInfo{
 		Name:       ident.Name,
 		Source:     "imported",
-		Path:       filepath.Join(root, "config", "imported-identities", importedIdentityFilename(name)),
+		Path:       path,
 		KeyID:      ident.KeyID,
 		PublicKey:  ident.PublicKey,
 		HasPrivate: ident.PrivateKey != "",
 	}, nil
+}
+
+func loadArchivedIdentityInfos(root string, name string) ([]identityInfo, error) {
+	dir := filepath.Join(root, "config", "identities", "archive")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read identity archive dir %q: %w", dir, err)
+	}
+	prefix := strings.TrimSuffix(filepath.Base(identityPathForName(name)), ".json") + "-"
+	out := []identityInfo{}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		ident, err := readIdentityFile(path)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, identityInfo{
+			Name:       ident.Name,
+			Source:     "archived",
+			Path:       path,
+			KeyID:      ident.KeyID,
+			PublicKey:  ident.PublicKey,
+			HasPrivate: ident.PrivateKey != "",
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].KeyID > out[j].KeyID })
+	return out, nil
+}
+
+func readIdentityFile(path string) (identity.Identity, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return identity.Identity{}, fmt.Errorf("read identity file %q: %w", path, err)
+	}
+	var ident identity.Identity
+	if err := json.Unmarshal(data, &ident); err != nil {
+		return identity.Identity{}, fmt.Errorf("parse identity file %q: %w", path, err)
+	}
+	return ident, nil
+}
+
+func resolveIdentityMatch(root string, name string, keyID string) (identityMatch, error) {
+	if ident, _, _, err := identity.Load(root, name); err == nil && ident.KeyID == keyID {
+		return identityMatch{
+			Identity: ident,
+			Info: identityInfo{
+				Name:       ident.Name,
+				Source:     "primary",
+				Path:       filepath.Join(root, identityPathForName(name)),
+				KeyID:      ident.KeyID,
+				PublicKey:  ident.PublicKey,
+				HasPrivate: true,
+			},
+			KeyState: "active",
+		}, nil
+	}
+	archived, err := loadArchivedIdentityInfos(root, name)
+	if err != nil {
+		return identityMatch{}, err
+	}
+	for _, item := range archived {
+		if item.KeyID != keyID {
+			continue
+		}
+		ident, err := readIdentityFile(item.Path)
+		if err != nil {
+			return identityMatch{}, err
+		}
+		return identityMatch{Identity: ident, Info: item, KeyState: "archived"}, nil
+	}
+	if imported, err := loadImportedIdentityInfo(root, name); err == nil && imported.KeyID == keyID {
+		ident, err := readIdentityFile(imported.Path)
+		if err != nil {
+			return identityMatch{}, err
+		}
+		return identityMatch{Identity: ident, Info: imported, KeyState: "imported"}, nil
+	}
+	return identityMatch{}, fmt.Errorf("signer %q with key %q not found in current, archived, or imported identity material", name, keyID)
 }
 
 func restoreImportedArtifacts(store *ledger.Store) (int, error) {
@@ -1652,6 +1810,8 @@ type inspectView struct {
 	ProtocolPath       string               `json:"protocol_path,omitempty"`
 	Signer             string               `json:"signer,omitempty"`
 	SignerKeyID        string               `json:"signer_key_id,omitempty"`
+	SignerKeyState     string               `json:"signer_key_state,omitempty"`
+	SignerIdentityPath string               `json:"signer_identity_path,omitempty"`
 	PayloadCID         string               `json:"payload_cid,omitempty"`
 	ProofCID           string               `json:"proof_cid,omitempty"`
 	ObservedAt         string               `json:"observed_at,omitempty"`
@@ -1673,6 +1833,7 @@ type verifyResult struct {
 	SignerIdentityOK    bool                `json:"signer_identity_verified"`
 	Signer              string              `json:"signer"`
 	SignerKeyID         string              `json:"signer_key_id"`
+	SignerKeyState      string              `json:"signer_key_state,omitempty"`
 	LocalIdentityFile   string              `json:"local_identity_file,omitempty"`
 	IdentitySource      string              `json:"identity_source,omitempty"`
 	ProtocolPCID        string              `json:"protocol_pcid"`
@@ -2137,6 +2298,17 @@ func (l identityLocation) Source() string {
 	return "primary local identity"
 }
 
+func identitySourceLabel(match identityMatch) string {
+	switch match.KeyState {
+	case "archived":
+		return "archived local identity"
+	case "imported":
+		return "imported support"
+	default:
+		return "primary local identity"
+	}
+}
+
 func latestImportForArtifact(items []model.ImportRecord, artifactCID string) *model.ImportRecord {
 	for i := len(items) - 1; i >= 0; i-- {
 		if items[i].ArtifactCID == artifactCID {
@@ -2251,6 +2423,12 @@ func buildArtifactInspectView(root string, registry protocol.Registry, ref strin
 		ObservedAt:   artifact.ObservedAt,
 		LatestImport: latestImportForArtifact(imports, artifact.ArtifactCID),
 	}
+	if artifact.Signer != "" && artifact.SignerKeyID != "" {
+		if match, err := resolveIdentityMatch(root, artifact.Signer, artifact.SignerKeyID); err == nil {
+			view.SignerKeyState = match.KeyState
+			view.SignerIdentityPath = match.Info.Path
+		}
+	}
 	return enrichInspectView(root, registry, view)
 }
 
@@ -2284,6 +2462,12 @@ func printInspectView(view inspectView) {
 	}
 	fmt.Printf("Signer: %s\n", emptyFallback(view.Signer, "(none)"))
 	fmt.Printf("Signer Key ID: %s\n", emptyFallback(view.SignerKeyID, "(none)"))
+	if view.SignerKeyState != "" {
+		fmt.Printf("Signer Key State: %s\n", view.SignerKeyState)
+	}
+	if view.SignerIdentityPath != "" {
+		fmt.Printf("Signer Identity Path: %s\n", view.SignerIdentityPath)
+	}
 	fmt.Printf("Payload CID: %s\n", emptyFallback(view.PayloadCID, "(none)"))
 	fmt.Printf("Proof CID: %s\n", emptyFallback(view.ProofCID, "(none)"))
 	fmt.Printf("Observed At: %s\n", emptyFallback(view.ObservedAt, "(none)"))
@@ -2322,10 +2506,10 @@ func emptyFallback(value string, fallback string) string {
 	return value
 }
 
-func buildVerifyResult(root string, registry protocol.Registry, artifact model.ArtifactRecord, decoded grid.DecodedArtifact, ident identity.Identity, latestImport *model.ImportRecord, policy trust.Policy) verifyResult {
+func buildVerifyResult(root string, registry protocol.Registry, artifact model.ArtifactRecord, decoded grid.DecodedArtifact, match identityMatch, latestImport *model.ImportRecord, policy trust.Policy) verifyResult {
 	location := resolveProtocolLocation(root, registry, decoded.ProtocolPCID)
-	identityLocation := resolveIdentityLocation(root, decoded.Proof.Signer)
-	evaluation := trust.Evaluate(policy, decoded.Proof.Signer, identityLocation.Matched && !identityLocation.Imported, decoded.ProtocolPCID, location.Matched && !location.Imported, latestImport)
+	identityLocation := identityLocation{Path: match.Info.Path, Matched: true, Imported: match.Info.Source == "imported"}
+	evaluation := trust.Evaluate(policy, decoded.Proof.Signer, match.Info.Source == "primary", decoded.ProtocolPCID, location.Matched && !location.Imported, latestImport)
 	out := verifyResult{
 		Reference:           emptyFallback(artifact.RelatedID, artifact.ArtifactCID),
 		Kind:                emptyFallback(artifact.Kind, "(unknown)"),
@@ -2337,6 +2521,7 @@ func buildVerifyResult(root string, registry protocol.Registry, artifact model.A
 		SignerIdentityOK:    true,
 		Signer:              decoded.Proof.Signer,
 		SignerKeyID:         decoded.Proof.KeyID,
+		SignerKeyState:      match.KeyState,
 		LocalIdentityFile:   identityLocation.Path,
 		ProtocolPCID:        decoded.ProtocolPCID,
 		LocalProtocolMatch:  location.Matched,
@@ -2354,7 +2539,7 @@ func buildVerifyResult(root string, registry protocol.Registry, artifact model.A
 		OverallTrusted:      evaluation.OverallTrusted,
 	}
 	if identityLocation.Matched {
-		out.IdentitySource = identityLocation.Source()
+		out.IdentitySource = identitySourceLabel(match)
 	}
 	if location.Matched {
 		out.ProtocolName = location.Name
@@ -2364,7 +2549,6 @@ func buildVerifyResult(root string, registry protocol.Registry, artifact model.A
 	if evaluation.ImportApplies {
 		out.ImportSourceTrusted = boolPtr(evaluation.ImportTrusted)
 	}
-	_ = ident
 	return out
 }
 
@@ -2379,6 +2563,9 @@ func printVerifyResult(result verifyResult) {
 	fmt.Printf("Signer Identity Verified: %s\n", yesNo(result.SignerIdentityOK))
 	fmt.Printf("Signer: %s\n", result.Signer)
 	fmt.Printf("Signer Key ID: %s\n", result.SignerKeyID)
+	if result.SignerKeyState != "" {
+		fmt.Printf("Signer Key State: %s\n", result.SignerKeyState)
+	}
 	fmt.Printf("Local Identity File: %s\n", result.LocalIdentityFile)
 	if result.IdentitySource != "" {
 		fmt.Printf("Identity Source: %s\n", result.IdentitySource)
