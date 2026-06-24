@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -836,7 +837,9 @@ func runProvenance(root string, store *ledger.Store, args []string) error {
 	artifactCID := fs.String("artifact", "", "filter by imported artifact CID")
 	sourcePath := fs.String("source", "", "filter by source path")
 	signer := fs.String("signer", "", "filter by artifact signer")
+	receiptSigner := fs.String("receipt-signer", "", "filter by receipt signer")
 	mode := fs.String("mode", "", "filter by import mode")
+	protocolPCID := fs.String("protocol-pcid", "", "filter by protocol pCID")
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -852,7 +855,7 @@ func runProvenance(root string, store *ledger.Store, args []string) error {
 	if err != nil {
 		return err
 	}
-	rows := buildProvenanceRows(imports, artifacts, *artifactCID, *sourcePath, *signer, *mode)
+	rows := buildProvenanceRows(imports, artifacts, *artifactCID, *sourcePath, *signer, *receiptSigner, *mode, *protocolPCID)
 	if *jsonOut {
 		return printJSON(rows)
 	}
@@ -1007,6 +1010,7 @@ func runDoctor(root string, store *ledger.Store, registry protocol.Registry, arg
 	}
 	fmt.Printf("Artifacts indexed: %d\n", report.Artifacts)
 	fmt.Printf("Primary identities: %d\n", report.PrimaryIdentities)
+	fmt.Printf("Archived identities: %d\n", report.ArchivedIdentities)
 	fmt.Printf("Imported identities: %d\n", report.ImportedIdentities)
 	fmt.Printf("Imported protocols: %d\n", report.ImportedProtocols)
 	fmt.Printf("Warnings: %d\n", len(report.Warnings))
@@ -1966,7 +1970,7 @@ func resolveArtifactReference(ref string, artifacts []model.ArtifactRecord, comm
 	return model.ArtifactRecord{}, fmt.Errorf("unknown verify reference %q", ref)
 }
 
-func buildProvenanceRows(imports []model.ImportRecord, artifacts []model.ArtifactRecord, artifactCID string, sourcePath string, signer string, mode string) []provenanceRow {
+func buildProvenanceRows(imports []model.ImportRecord, artifacts []model.ArtifactRecord, artifactCID string, sourcePath string, signer string, receiptSigner string, mode string, protocolPCID string) []provenanceRow {
 	receipts := receiptArtifactsByImportedArtifact(artifacts)
 	rows := make([]provenanceRow, 0, len(imports))
 	for i := len(imports) - 1; i >= 0; i-- {
@@ -1980,7 +1984,14 @@ func buildProvenanceRows(imports []model.ImportRecord, artifacts []model.Artifac
 		if signer != "" && record.Signer != signer {
 			continue
 		}
+		if protocolPCID != "" && record.ProtocolPCID != protocolPCID {
+			continue
+		}
 		if mode != "" && record.Mode != mode {
+			continue
+		}
+		rowReceipts := filterReceiptArtifacts(receipts[record.ArtifactCID], receiptSigner)
+		if receiptSigner != "" && len(rowReceipts) == 0 {
 			continue
 		}
 		rows = append(rows, provenanceRow{
@@ -1995,10 +2006,23 @@ func buildProvenanceRows(imports []model.ImportRecord, artifacts []model.Artifac
 			InstalledProtocolPCID:   record.InstalledProtocolPCID,
 			InstalledSignerIdentity: record.InstalledSignerIdentity,
 			ReceiptArtifactCID:      record.ReceiptArtifactCID,
-			Receipts:                receipts[record.ArtifactCID],
+			Receipts:                rowReceipts,
 		})
 	}
 	return rows
+}
+
+func filterReceiptArtifacts(items []model.ArtifactRecord, signer string) []model.ArtifactRecord {
+	if signer == "" {
+		return items
+	}
+	out := make([]model.ArtifactRecord, 0, len(items))
+	for _, item := range items {
+		if item.Signer == signer {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func artifactExists(artifacts []model.ArtifactRecord, artifactCID string) bool {
@@ -2805,6 +2829,7 @@ func printJSON(v any) error {
 type doctorSummary struct {
 	Artifacts           int      `json:"artifacts"`
 	PrimaryIdentities   int      `json:"primary_identities"`
+	ArchivedIdentities  int      `json:"archived_identities"`
 	ImportedIdentities  int      `json:"imported_identities"`
 	ImportedProtocols   int      `json:"imported_protocols"`
 	Warnings            []string `json:"warnings"`
@@ -2872,8 +2897,14 @@ func doctorReport(root string, store *ledger.Store, registry protocol.Registry) 
 		if decoded.ProofCID != artifact.ProofCID {
 			addDoctorError(&summary, fmt.Sprintf("artifact %s proof CID mismatch", artifact.ArtifactCID), false, "")
 		}
+		if _, err := resolveIdentityMatch(root, decoded.Proof.Signer, decoded.Proof.KeyID); err != nil {
+			addDoctorError(&summary, fmt.Sprintf("artifact %s signer lineage unknown: %v", artifact.ArtifactCID, err), false, "")
+		}
 	}
 	if err := doctorIdentityDir(root, filepath.Join(root, "config", "identities"), true, &summary, importedSigners); err != nil {
+		return summary, err
+	}
+	if err := doctorArchivedIdentities(root, &summary); err != nil {
 		return summary, err
 	}
 	if err := doctorIdentityDir(root, filepath.Join(root, "config", "imported-identities"), false, &summary, importedSigners); err != nil {
@@ -2920,11 +2951,15 @@ func doctorIdentityDir(root string, dir string, primary bool, summary *doctorSum
 		}
 		name := strings.TrimSuffix(entry.Name(), ".json")
 		if primary {
-			if _, _, _, err := identity.Load(root, name); err != nil {
+			ident, _, _, err := identity.Load(root, name)
+			if err != nil {
 				addDoctorError(summary, fmt.Sprintf("primary identity %s invalid: %v", name, err), false, "")
 				continue
 			}
 			summary.PrimaryIdentities++
+			if err := doctorExpectedArchivedIdentities(root, ident.Name, summary); err != nil {
+				return err
+			}
 			continue
 		}
 		if _, _, err := identity.LoadVerifier(root, name); err != nil {
@@ -2937,6 +2972,58 @@ func doctorIdentityDir(root string, dir string, primary bool, summary *doctorSum
 			continue
 		}
 		summary.ImportedIdentities++
+	}
+	return nil
+}
+
+func doctorArchivedIdentities(root string, summary *doctorSummary) error {
+	dir := filepath.Join(root, "config", "identities", "archive")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read identity archive dir %q: %w", dir, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		ident, err := readIdentityFile(path)
+		if err != nil {
+			addDoctorError(summary, fmt.Sprintf("archived identity %s invalid: %v", entry.Name(), err), false, "")
+			continue
+		}
+		expected := archiveIdentityFilename(ident.Name, ident.KeyID)
+		if entry.Name() != expected {
+			addDoctorError(summary, fmt.Sprintf("archived identity %s filename mismatch: want %s", entry.Name(), expected), false, "")
+			continue
+		}
+		if ident.PrivateKey == "" {
+			addDoctorError(summary, fmt.Sprintf("archived identity %s missing private key", entry.Name()), false, "")
+			continue
+		}
+		summary.ArchivedIdentities++
+	}
+	return nil
+}
+
+func doctorExpectedArchivedIdentities(root string, name string, summary *doctorSummary) error {
+	current, err := loadIdentityInfo(root, name)
+	if err != nil || current.Source != "primary" {
+		return nil
+	}
+	version, ok := parseIdentityKeyVersion(current.KeyID)
+	if !ok || version <= 1 {
+		return nil
+	}
+	for i := 1; i < version; i++ {
+		keyID := expectedIdentityKeyID(name, i)
+		path := filepath.Join(root, "config", "identities", "archive", archiveIdentityFilename(name, keyID))
+		if statFileMissing(path) {
+			addDoctorError(summary, fmt.Sprintf("identity %s missing archived key file for %s", name, keyID), false, "")
+		}
 	}
 	return nil
 }
@@ -3003,6 +3090,28 @@ func checkExpectedImportedSupport(root string, summary *doctorSummary, importedP
 			addDoctorError(summary, fmt.Sprintf("imported identity %s support file missing", name), true, "run repair --import-support to restore imported signer support files from saved bundle paths")
 		}
 	}
+}
+
+func expectedIdentityKeyID(name string, version int) string {
+	base := strings.TrimSuffix(filepath.Base(identityPathForName(name)), ".json")
+	return fmt.Sprintf("%s-ed25519-v%d", base, version)
+}
+
+func archiveIdentityFilename(name string, keyID string) string {
+	base := strings.TrimSuffix(filepath.Base(identityPathForName(name)), ".json")
+	return fmt.Sprintf("%s-%s.json", base, keyID)
+}
+
+func parseIdentityKeyVersion(keyID string) (int, bool) {
+	idx := strings.LastIndex(keyID, "-v")
+	if idx == -1 || idx+2 >= len(keyID) {
+		return 0, false
+	}
+	version, err := strconv.Atoi(keyID[idx+2:])
+	if err != nil || version < 1 {
+		return 0, false
+	}
+	return version, true
 }
 
 func statFileMissing(path string) bool {

@@ -1558,6 +1558,48 @@ func TestRunProvenanceShowsReceiveHistoryAndReceipts(t *testing.T) {
 	}
 }
 
+func TestRunProvenanceFiltersByReceiptSignerAndProtocolPCID(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	inbox := filepath.Join(root, "peer-inbox")
+	bundlePath := filepath.Join(inbox, "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+	now := time.Date(2026, 6, 25, 0, 10, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runReceive(root, store, registry, now, []string{"--inbox", inbox}); err != nil {
+		t.Fatalf("runReceive: %v", err)
+	}
+
+	textOut := captureStdout(t, func() error {
+		return runProvenance(root, store, []string{
+			"--mode", "receive",
+			"--receipt-signer", "commitment-ledger",
+			"--protocol-pcid", bundle.Artifact.ProtocolPCID,
+		})
+	})
+	for _, fragment := range []string{
+		"Source: " + bundlePath,
+		"Protocol pCID: " + bundle.Artifact.ProtocolPCID,
+		"Receipt Count: 1",
+	} {
+		if !strings.Contains(textOut, fragment) {
+			t.Fatalf("filtered provenance output missing %q:\n%s", fragment, textOut)
+		}
+	}
+
+	jsonOut := captureStdout(t, func() error {
+		return runProvenance(root, store, []string{"--receipt-signer", "nobody", "--json"})
+	})
+	if !strings.Contains(jsonOut, "[]") {
+		t.Fatalf("expected empty provenance json output for unmatched receipt signer:\n%s", jsonOut)
+	}
+}
+
 func TestRunIdentityRotateArchivesAndReplacesKey(t *testing.T) {
 	root := t.TempDir()
 	if _, _, _, err := identity.LoadOrCreate(root, "Alice"); err != nil {
@@ -1689,6 +1731,105 @@ func TestVerifyAndInspectUseArchivedSignerKeyAfterRotation(t *testing.T) {
 	})
 	if !strings.Contains(verifyJSON, "\"signer_key_state\": \"archived\"") {
 		t.Fatalf("verify json output missing archived key state:\n%s", verifyJSON)
+	}
+}
+
+func TestDoctorDetectsMissingArchivedKeyAndUnknownHistoricalSigner(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(root, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+	now := time.Date(2026, 6, 25, 0, 40, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(root, store, registry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan: %v", err)
+	}
+	if err := runCommit(root, store, registry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+	if err := runIdentity(root, []string{"rotate", "--name", "Alice"}); err != nil {
+		t.Fatalf("runIdentity rotate: %v", err)
+	}
+	archivePath := filepath.Join(root, "config", "identities", "archive", archiveIdentityFilename("Alice", "alice-ed25519-v1"))
+	if err := os.Remove(archivePath); err != nil {
+		t.Fatalf("remove archived identity: %v", err)
+	}
+
+	report, err := doctorReport(root, store, registry)
+	if err != nil {
+		t.Fatalf("doctorReport: %v", err)
+	}
+	missingArchive := false
+	unknownSigner := false
+	for _, issue := range report.NonRepairableErrors {
+		if strings.Contains(issue, "identity Alice missing archived key file for alice-ed25519-v1") {
+			missingArchive = true
+		}
+		if strings.Contains(issue, "signer lineage unknown") && strings.Contains(issue, "alice-ed25519-v1") {
+			unknownSigner = true
+		}
+	}
+	if !missingArchive || !unknownSigner {
+		t.Fatalf("doctor report missing lineage findings: %#v", report)
+	}
+}
+
+func TestDoctorDetectsMalformedArchivedIdentityEntry(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	if _, _, _, err := identity.LoadOrCreate(root, "Alice"); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+	if err := runIdentity(root, []string{"rotate", "--name", "Alice"}); err != nil {
+		t.Fatalf("runIdentity rotate: %v", err)
+	}
+	archivePath := filepath.Join(root, "config", "identities", "archive", archiveIdentityFilename("Alice", "alice-ed25519-v1"))
+	if err := os.WriteFile(archivePath, []byte("{bad json"), 0o600); err != nil {
+		t.Fatalf("overwrite archived identity: %v", err)
+	}
+
+	report, err := doctorReport(root, store, registry)
+	if err != nil {
+		t.Fatalf("doctorReport: %v", err)
+	}
+	found := false
+	for _, issue := range report.NonRepairableErrors {
+		if strings.Contains(issue, "archived identity alice-alice-ed25519-v1.json invalid") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("doctor report missing malformed archived identity finding: %#v", report)
 	}
 }
 

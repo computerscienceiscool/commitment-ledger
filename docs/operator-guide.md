@@ -299,6 +299,7 @@ go run ./cmd/commitment-ledger provenance --mode receive
 go run ./cmd/commitment-ledger provenance --artifact bafy...
 go run ./cmd/commitment-ledger provenance --source /tmp/peer-inbox/bundle.json --json
 go run ./cmd/commitment-ledger provenance --signer Mallory
+go run ./cmd/commitment-ledger provenance --receipt-signer commitment-ledger --protocol-pcid bafy... --json
 ```
 
 `provenance` is the direct history browser over local import and receive rows.
@@ -308,6 +309,8 @@ You can filter by:
 - imported artifact CID
 - source path
 - artifact signer
+- receipt signer
+- protocol pCID
 - mode such as `import` or `receive`
 
 The output also shows any local receive-receipt artifacts that acknowledge the
@@ -360,7 +363,8 @@ go run ./cmd/commitment-ledger doctor --repairable
 
 - artifact index rows versus CAS presence and decodability
 - indexed protocol, payload, and proof CIDs versus decoded envelope bytes
-- primary and imported identity files can be parsed
+- primary, archived, and imported identity files can be parsed
+- artifact signer/key pairs still resolve against current, archived, or imported identity material
 - imported protocol metadata matches imported protocol document bytes
 
 Treat a nonzero `doctor` result as a real local integrity problem until you
