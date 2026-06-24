@@ -148,7 +148,7 @@ def make_demo_steps(workspace: Path) -> list[Step]:
             title="Step 2: Scan Real Local Repos",
             commands=["go run ./cmd/commitment-ledger scan --config config/repos.json"],
             say=[
-                "The ledger scans real local git repos and discovers branch-qualified work.",
+                "The ledger scans seeded demo repos on disk and discovers branch-qualified work.",
                 "It does not hand-maintain a separate task list.",
             ],
             output=scan1,

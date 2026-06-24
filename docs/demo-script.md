@@ -56,9 +56,10 @@ make demo-scan
 
 What to say:
 
-> Commitment Ledger is not editing team repos. It observes ordinary repos that
-> already have TODO files, records promises made against that work, keeps exact
-> artifact bytes locally, and lets us assess what happened later.
+> Commitment Ledger is not editing our real team repos during this demo. It is
+> observing seeded synthetic repos that look like ordinary TODO-driven work
+> repos, records promises made against that work, keeps exact artifact bytes
+> locally, and lets us assess what happened later.
 
 > The important shift is that we are not treating a task board as the whole
 > truth. We are tracking work, promises about that work, evidence, and later
@@ -89,7 +90,7 @@ What to point at:
 - subtask `2. Add tests`
 - subtask `3. Add docs`
 
-## Step 2: Show Observation Of Real Repos
+## Step 2: Show Observation Of Seeded Demo Repos
 
 Commands:
 
@@ -107,8 +108,8 @@ make demo-scan
 
 What to say:
 
-> Now the ledger scans real local git repos. It is not inventing work and it is
-> not maintaining a separate shadow task list by hand.
+> Now the ledger scans seeded demo repos on disk. It is not inventing work and
+> it is not maintaining a separate shadow task list by hand.
 
 > It discovers work from Alice, Bob, Dave, and Mallory repos, and records that
 > as branch-qualified work items.
@@ -270,8 +271,8 @@ git -C /home/jj/lab/commitment-ledger-demo/alice-demo -c user.name=Alice -c user
 
 What to say:
 
-> Now Alice has actually changed the source repo. This is important: the source
-> evidence lives in the work repo, not only in the ledger repo.
+> Now Alice has actually changed the seeded source repo. This is important: the
+> source evidence lives in the work repo, not only in the ledger repo.
 
 > We are changing the actual subtask state and committing it like normal repo
 > work.
@@ -417,8 +418,11 @@ What to say:
 
 What to say:
 
-> The system starts from ordinary repos. It does not require teams to abandon
-> their normal TODO files.
+> The system starts from ordinary-looking repos. In this demo we are using
+> seeded synthetic repos so we do not expose real project information.
+
+> After the demo, the same workflow can be pointed at real repos if we want to
+> show actual project state.
 
 > It adds a second layer: explicit promises, evidence, and assessments.
 

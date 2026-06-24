@@ -2,14 +2,15 @@
 
 ## Purpose
 
-This plan shows how to exercise Commitment Ledger against real local git repos
+This plan shows how to exercise Commitment Ledger against seeded synthetic local
+git repos
 using the naming style and character roles that already recur in the
 PromiseGrid development guide.
 
 The goal is not only to prove that the CLI runs, but to demonstrate the
 PromiseGrid-oriented lifecycle:
 
-- work exists in ordinary repos
+- work exists in ordinary-looking demo repos
 - a promiser makes a commitment against that work
 - evidence is collected as exact local observations
 - assessment stays local and explicit
@@ -28,9 +29,9 @@ This matches the guide well enough to stay familiar:
 - `Bob` is the best fit for the well-meaning but unreliable role
 - `Mallory` is the best fit for the deliberate troublemaker role
 
-## Real Repo Set
+## Synthetic Demo Repo Set
 
-Create four real local repos under one demo parent directory:
+Create four seeded synthetic local repos under one demo parent directory:
 
 ```text
 ~/lab/commitment-ledger-demo/
@@ -85,7 +86,8 @@ Example detail file:
 - [ ] 3. Add docs
 ```
 
-Use real detail files so the current parser can discover subtasks.
+Use actual detail files in the seeded demo repos so the current parser can
+discover subtasks.
 
 ## Repo Roles
 
@@ -155,7 +157,10 @@ This lets the demo show that:
 
 ## Commitment Ledger Config
 
-Populate [config/repos.json](/home/jj/lab/commitment-ledger/config/repos.json) with all four repos before the first scan, or use the generated `config/repos.demo.json` from `make demo-setup`. The checked-in file currently ships with an empty `repos` list so the repo does not point at any machine-specific paths by default.
+Use the generated `config/repos.demo.json` from `make demo-setup` for the demo.
+The checked-in [config/repos.json](/home/jj/lab/commitment-ledger/config/repos.json)
+ships with an empty `repos` list so the repo does not point at any
+machine-specific paths by default.
 
 Example:
 
