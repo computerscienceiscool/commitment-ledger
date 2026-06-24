@@ -46,7 +46,7 @@ commitment-ledger scan --config config/repos.json
 commitment-ledger commit --promiser JJ --repo repo --branch main --target repo/main/TODO-abcd --due 2026-06-30 --promise "I promise ..."
 commitment-ledger evidence --commitment COMMITMENT-... --type manual_note --notes "Observed blocker"
 commitment-ledger assess --commitment COMMITMENT-... --assessor JJ --status kept --notes "Completed on time"
-commitment-ledger conformance --signer commitment-ledger --version v0.1.0
+commitment-ledger conformance --signer commitment-ledger --version v0.1.0 --write-changelog
 commitment-ledger expire
 commitment-ledger status
 commitment-ledger report --promiser JJ
@@ -54,6 +54,8 @@ commitment-ledger inspect COMMITMENT-...
 commitment-ledger verify COMMITMENT-...
 commitment-ledger export --out /tmp/bundle.json COMMITMENT-...
 commitment-ledger import --in /tmp/bundle.json
+commitment-ledger send --outbox /tmp/peer-outbox COMMITMENT-...
+commitment-ledger receive --inbox /tmp/peer-inbox --archive /tmp/peer-archive
 ```
 
 ## Make Targets
@@ -75,7 +77,10 @@ Common targets:
 - `make verify VERIFY_ARGS='COMMITMENT-...'`: verify a commitment ID, evidence ID, assessment ID, or artifact CID against local CAS bytes and signer material
 - `make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'`: export an artifact bundle with related projection rows and support material
 - `make import IMPORT_ARGS='--in /tmp/bundle.json'`: import an artifact bundle and optionally install bundled support material
+- `make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'`: write a bundle into a peer-facing outbox directory
+- `make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'`: import all bundle files from a peer inbox directory
 - `make conformance VERSION=v0.1.0 SIGNER=commitment-ledger`: emit a local conformance claim
+- `make conformance-update VERSION=v0.1.0 SIGNER=commitment-ledger`: emit a conformance artifact and refresh the managed `CHANGELOG.md` entries
 
 Demo-oriented targets:
 
@@ -127,10 +132,11 @@ Observed work targets are always branch-qualified, for example
   signed `grid([42(pCID), payload, proof])` artifacts stored in local CAS.
 - JSONL and Markdown files are projections over those raw artifacts.
 - Repo status summaries surface kept and non-kept terminal outcomes separately.
-- `inspect` resolves commitment IDs, evidence IDs, assessment IDs, and artifact CIDs back to their local artifact metadata and frozen protocol docs.
-- `verify` checks local CAS bytes, envelope/payload/proof CIDs, the signature, and matching local signer identity material for a referenced artifact.
+- `inspect` resolves commitment IDs, evidence IDs, assessment IDs, and artifact CIDs back to their local artifact metadata, frozen protocol docs, matching `CHANGELOG.md` conformance entries, and latest import provenance when present.
+- `verify` checks local CAS bytes, envelope/payload/proof CIDs, the signature, matching local signer identity material, and whether the signer/protocol support came from built-in local state or imported support.
 - `export` writes a portable bundle containing the artifact index row, envelope bytes, related projection rows, and available signer/protocol support material.
-- `import` loads that bundle back into local CAS and projections, and can install bundled signer/protocol support material for later `inspect` and `verify` use.
+- `import` loads that bundle back into local CAS and projections, can install bundled signer/protocol support material for later `inspect` and `verify` use, and records import provenance in `data/imports.jsonl`.
+- `send` and `receive` add a local filesystem inbox/outbox exchange path on top of the bundle format; they are still not network transport.
 
 ## Demo Docs
 

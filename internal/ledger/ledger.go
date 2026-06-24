@@ -86,6 +86,23 @@ func (s *Store) LoadArtifacts() ([]model.ArtifactRecord, error) {
 	return items, err
 }
 
+func (s *Store) AppendImport(record model.ImportRecord) error {
+	return appendJSONL(s.dataPath("imports.jsonl"), record)
+}
+
+func (s *Store) LoadImports() ([]model.ImportRecord, error) {
+	var items []model.ImportRecord
+	err := readJSONL(s.dataPath("imports.jsonl"), func(line []byte) error {
+		var item model.ImportRecord
+		if err := json.Unmarshal(line, &item); err != nil {
+			return fmt.Errorf("decode import: %w", err)
+		}
+		items = append(items, item)
+		return nil
+	})
+	return items, err
+}
+
 func (s *Store) LoadLatestSnapshots() (map[string]model.Snapshot, error) {
 	snapshots := map[string]model.Snapshot{}
 	err := readJSONL(s.dataPath("snapshots.jsonl"), func(line []byte) error {

@@ -21,9 +21,11 @@ INSPECT_ARGS ?=
 VERIFY_ARGS ?=
 EXPORT_ARGS ?=
 IMPORT_ARGS ?=
+SEND_ARGS ?=
+RECEIVE_ARGS ?=
 TODO_REPOS := alice-demo bob-demo dave-demo mallory-demo
 
-.PHONY: help fmt test build check clean cli scan status report inspect verify export import conformance expire commit evidence assess \
+.PHONY: help fmt test build check clean cli scan status report inspect verify export import send receive conformance conformance-update expire commit evidence assess \
 	demo-init demo-seed demo-config demo-setup demo-scan demo-status demo-report
 
 help:
@@ -45,7 +47,10 @@ help:
 	@echo "  make verify VERIFY_ARGS='COMMITMENT-...'"
 	@echo "  make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'"
 	@echo "  make import IMPORT_ARGS='--in /tmp/bundle.json'"
+	@echo "  make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'"
+	@echo "  make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'"
 	@echo "  make conformance VERSION=$(VERSION) SIGNER=$(SIGNER)"
+	@echo "  make conformance-update VERSION=$(VERSION) SIGNER=$(SIGNER)"
 	@echo "  make expire"
 	@echo "  make commit COMMIT_ARGS='--promiser Alice --repo alice-demo --branch main --target alice-demo/main/TODO-ravud/1 --due 2026-07-01 --promise ...'"
 	@echo "  make evidence EVIDENCE_ARGS='--commitment COMMITMENT-... --type manual_note --notes ...'"
@@ -97,8 +102,17 @@ export:
 import:
 	@$(RUN) import $(IMPORT_ARGS)
 
+send:
+	@$(RUN) send $(SEND_ARGS)
+
+receive:
+	@$(RUN) receive $(RECEIVE_ARGS)
+
 conformance:
 	@$(RUN) conformance --signer $(SIGNER) --version $(VERSION)
+
+conformance-update:
+	@$(RUN) conformance --signer $(SIGNER) --version $(VERSION) --write-changelog
 
 expire:
 	@$(RUN) expire

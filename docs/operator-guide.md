@@ -24,8 +24,11 @@ make report REPORT_ARGS='--promiser Alice'
 make inspect INSPECT_ARGS='COMMITMENT-...'
 make verify VERIFY_ARGS='COMMITMENT-...'
 make conformance VERSION=v0.1.0 SIGNER=commitment-ledger
+make conformance-update VERSION=v0.1.0 SIGNER=commitment-ledger
 make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'
 make import IMPORT_ARGS='--in /tmp/bundle.json'
+make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'
+make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'
 ```
 
 For the seeded demo workflow:
@@ -150,9 +153,11 @@ It prints:
 - artifact CID
 - protocol name and `pCID`
 - local frozen protocol doc path
+- matching `CHANGELOG.md` conformance entries when the protocol is claimed there
 - signer and signer key ID
 - payload and proof CIDs
 - related local record path when one exists
+- latest import provenance when the artifact entered this repo through `import` or `receive`
 - current projected status or evidence details
 
 ### `verify`
@@ -173,7 +178,8 @@ go run ./cmd/commitment-ledger verify bafy...
 - the signer and key ID match local identity material under `config/identities/`
 
 It also tells you whether the artifact's `protocol_pcid` matches a local frozen
-protocol doc.
+protocol doc, whether the identity/protocol support came from built-in or
+imported state, and the latest recorded import provenance when applicable.
 
 ### `conformance`
 
@@ -184,9 +190,9 @@ go run ./cmd/commitment-ledger conformance --signer commitment-ledger --version 
 Use `conformance` when you want a machine-readable signed claim about the
 protocol docs this implementation currently speaks.
 
-After emitting a new conformance artifact, update `CHANGELOG.md` so the repo
-also publishes the same claim in the human-facing shape the PromiseGrid dev
-guide points App Devs toward.
+Use `--write-changelog` or `make conformance-update` when you want the repo's
+managed `CHANGELOG.md` conformance entries refreshed alongside the signed
+artifact.
 
 ### `export`
 
@@ -222,6 +228,28 @@ By default it also installs bundled support material into:
 Use `--install-support=false` when you want to import the artifact but
 deliberately keep signer/protocol support separate.
 
+Every successful `import` also appends an import provenance row to
+`data/imports.jsonl`.
+
+### `send`
+
+```bash
+go run ./cmd/commitment-ledger send --outbox /tmp/peer-outbox COMMITMENT-...
+```
+
+`send` is a convenience wrapper over `export` that writes a bundle file into a
+peer-facing outbox directory with a generated filename.
+
+### `receive`
+
+```bash
+go run ./cmd/commitment-ledger receive --inbox /tmp/peer-inbox
+go run ./cmd/commitment-ledger receive --inbox /tmp/peer-inbox --archive /tmp/peer-archive
+```
+
+`receive` scans a local inbox directory for bundle files, imports them, and can
+optionally archive the processed files after successful import.
+
 ## Local State Layout
 
 ### `data/`
@@ -233,6 +261,7 @@ Append-only machine-readable projections:
 - `data/evidence.jsonl`: evidence projections
 - `data/assessments.jsonl`: assessment projections
 - `data/artifacts.jsonl`: local artifact index rows
+- `data/imports.jsonl`: import and receive provenance rows
 - `data/snapshots.jsonl`: per-scan repo summaries
 
 ### `data/cas/`

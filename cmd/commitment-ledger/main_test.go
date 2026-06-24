@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"commitment-ledger/internal/changelog"
 	"commitment-ledger/internal/config"
 	"commitment-ledger/internal/exchange"
 	"commitment-ledger/internal/grid"
@@ -576,21 +577,26 @@ func TestRunExportImportRoundTripWithSupport(t *testing.T) {
 	verifyEvidence := captureStdout(t, func() error {
 		return runVerify(importRoot, importStore, importRegistry, []string{evidenceItem.EvidenceID})
 	})
-	if !strings.Contains(verifyEvidence, "Kind: commitment_evidence") || !strings.Contains(verifyEvidence, "Signature Verified: yes") {
+	if !strings.Contains(verifyEvidence, "Kind: commitment_evidence") ||
+		!strings.Contains(verifyEvidence, "Signature Verified: yes") ||
+		!strings.Contains(verifyEvidence, "Identity Source: imported support") {
 		t.Fatalf("unexpected imported evidence verify output:\n%s", verifyEvidence)
 	}
 
 	verifyAssessment := captureStdout(t, func() error {
 		return runVerify(importRoot, importStore, importRegistry, []string{assessment.AssessmentID})
 	})
-	if !strings.Contains(verifyAssessment, "Kind: commitment_assessment") || !strings.Contains(verifyAssessment, "Protocol: "+protocol.CommitmentAssessment) {
+	if !strings.Contains(verifyAssessment, "Kind: commitment_assessment") ||
+		!strings.Contains(verifyAssessment, "Protocol: "+protocol.CommitmentAssessment) ||
+		!strings.Contains(verifyAssessment, "Latest Import Source: "+assessmentBundlePath) {
 		t.Fatalf("unexpected imported assessment verify output:\n%s", verifyAssessment)
 	}
 
 	inspectAssessment := captureStdout(t, func() error {
 		return runInspect(importRoot, importStore, importRegistry, []string{assessment.AssessmentID})
 	})
-	if !strings.Contains(inspectAssessment, "Current Commitment Status: kept") {
+	if !strings.Contains(inspectAssessment, "Current Commitment Status: kept") ||
+		!strings.Contains(inspectAssessment, "Latest Import Source: "+assessmentBundlePath) {
 		t.Fatalf("unexpected imported assessment inspect output:\n%s", inspectAssessment)
 	}
 }
@@ -640,7 +646,9 @@ func TestRunImportVerifyUsesImportedProtocolSupportAndFailsOnMismatchedSigner(t 
 	verifyOut := captureStdout(t, func() error {
 		return runVerify(importRoot, importStore, importRegistry, []string{bundle.Artifact.ArtifactCID})
 	})
-	if !strings.Contains(verifyOut, "Local Protocol Match: yes") || !strings.Contains(verifyOut, "Protocol: external-protocol-v1") {
+	if !strings.Contains(verifyOut, "Local Protocol Match: yes") ||
+		!strings.Contains(verifyOut, "Protocol: external-protocol-v1") ||
+		!strings.Contains(verifyOut, "Protocol Source: imported support") {
 		t.Fatalf("expected imported protocol support in verify output:\n%s", verifyOut)
 	}
 
@@ -877,6 +885,127 @@ func TestConformanceArtifactDistinguishesClaimedEmittedAndHistoricalProtocols(t 
 	}
 	if artifacts[0].ArtifactCID != artifactCID {
 		t.Fatalf("artifact CID = %q, want %q", artifacts[0].ArtifactCID, artifactCID)
+	}
+}
+
+func TestRunConformanceCanWriteChangelogAndInspectShowsCoverage(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	now := time.Date(2026, 6, 24, 19, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	out := captureStdout(t, func() error {
+		return runConformance(root, store, registry, now, []string{"--version", "v0.2.0", "--write-changelog"})
+	})
+	if !strings.Contains(out, "Updated "+changelog.Path(root)) {
+		t.Fatalf("conformance output missing changelog update:\n%s", out)
+	}
+
+	body, err := os.ReadFile(changelog.Path(root))
+	if err != nil {
+		t.Fatalf("read changelog: %v", err)
+	}
+	if !strings.Contains(string(body), "Current commitment-ledger v0.2.0 emission for local frozen `implementation-conformance-v1`.") {
+		t.Fatalf("changelog missing implementation conformance entry:\n%s", string(body))
+	}
+
+	artifacts, err := store.LoadArtifacts()
+	if err != nil {
+		t.Fatalf("LoadArtifacts: %v", err)
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("got %d artifacts, want 1", len(artifacts))
+	}
+
+	inspectOut := captureStdout(t, func() error {
+		return runInspect(root, store, registry, []string{artifacts[0].ArtifactCID})
+	})
+	if !strings.Contains(inspectOut, "Protocol: "+protocol.ImplementationConformance) ||
+		!strings.Contains(inspectOut, "Conformance Claim: implements (scope=full, breaking-change=false)") {
+		t.Fatalf("inspect output missing conformance coverage:\n%s", inspectOut)
+	}
+}
+
+func TestRunSendAndReceiveRoundTrip(t *testing.T) {
+	exportRoot := t.TempDir()
+	copyProtocolDocs(t, exportRoot)
+	exportStore := ledger.NewStore(exportRoot)
+	exportRegistry, err := protocol.Load(exportRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load export: %v", err)
+	}
+
+	repoPath := filepath.Join(exportRoot, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(exportRoot, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+
+	now := time.Date(2026, 6, 24, 20, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(exportRoot, exportStore, exportRegistry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan: %v", err)
+	}
+	if err := runCommit(exportRoot, exportStore, exportRegistry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+	commitment := latestCommitment(t, exportStore)
+	outbox := filepath.Join(exportRoot, "outbox")
+	if err := runSend(exportRoot, exportStore, exportRegistry, now.Add(2*time.Minute), []string{"--outbox", outbox, commitment.CommitmentID}); err != nil {
+		t.Fatalf("runSend: %v", err)
+	}
+	files, err := os.ReadDir(outbox)
+	if err != nil {
+		t.Fatalf("ReadDir outbox: %v", err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("outbox files = %d, want 1", len(files))
+	}
+
+	importRoot := t.TempDir()
+	copyProtocolDocs(t, importRoot)
+	importStore := ledger.NewStore(importRoot)
+	importRegistry, err := protocol.Load(importRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load import: %v", err)
+	}
+	archive := filepath.Join(importRoot, "archive")
+	if err := runReceive(importRoot, importStore, importRegistry, now.Add(3*time.Minute), []string{"--inbox", outbox, "--archive", archive}); err != nil {
+		t.Fatalf("runReceive: %v", err)
+	}
+	archived, err := os.ReadDir(archive)
+	if err != nil {
+		t.Fatalf("ReadDir archive: %v", err)
+	}
+	if len(archived) != 1 {
+		t.Fatalf("archived files = %d, want 1", len(archived))
+	}
+
+	verifyOut := captureStdout(t, func() error {
+		return runVerify(importRoot, importStore, importRegistry, []string{commitment.CommitmentID})
+	})
+	if !strings.Contains(verifyOut, "Kind: commitment_promise") ||
+		!strings.Contains(verifyOut, "Latest Import Mode: receive") {
+		t.Fatalf("unexpected receive verify output:\n%s", verifyOut)
 	}
 }
 

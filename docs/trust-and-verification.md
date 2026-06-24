@@ -25,6 +25,10 @@ the command resolves the referenced artifact and checks:
    file
 7. the artifact's `protocol_pcid` matches a locally frozen protocol doc, if the
    repo has that doc loaded
+8. the output shows whether the signer and protocol support came from built-in
+   local state or imported support
+9. the output includes the latest recorded import provenance when the artifact
+   entered the repo through `import` or `receive`
 
 ## What `verify` Does Not Check
 
@@ -48,11 +52,14 @@ Today, Commitment Ledger is local-first:
 - imported public signer material can live under `config/imported-identities/`
 - protocol docs live under `docs/protocols/`
 - imported protocol docs can live under `data/imported-protocols/`
+- import and receive provenance lives under `data/imports.jsonl`
 - conformance claims are local statements by this implementation
 
 That means verification is strongest when you are checking artifacts emitted by
 this same local repo state and signer store. Imported bundles can extend what
 the repo can verify locally, but they do not by themselves create shared trust.
+The repo can now at least tell you where imported support came from inside this
+local ledger state; it still cannot decide whether that source deserves trust.
 
 ## Practical Reading
 
@@ -63,6 +70,8 @@ If `verify` succeeds, the useful interpretation is:
 - the signer matches the local identity material you currently have
 - the artifact can be tied back to a known local protocol doc when one is
   present
+- the repo can show whether that support was built-in or imported and when the
+  artifact was imported into this local ledger state
 
 If `verify` fails because of signer mismatch, missing signer identity, or CID
 mismatch, treat that as a real integrity problem until explained.

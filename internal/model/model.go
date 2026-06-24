@@ -111,6 +111,19 @@ type ArtifactRecord struct {
 	RelatedCID   string `json:"related_cid,omitempty"`
 }
 
+type ImportRecord struct {
+	ImportedAt              string `json:"imported_at"`
+	Mode                    string `json:"mode"`
+	SourcePath              string `json:"source_path"`
+	ArtifactCID             string `json:"artifact_cid"`
+	RelatedID               string `json:"related_id,omitempty"`
+	ProtocolPCID            string `json:"protocol_pcid"`
+	Signer                  string `json:"signer,omitempty"`
+	SupportInstalled        bool   `json:"support_installed"`
+	InstalledProtocolPCID   string `json:"installed_protocol_pcid,omitempty"`
+	InstalledSignerIdentity string `json:"installed_signer_identity,omitempty"`
+}
+
 type Snapshot struct {
 	Repo               string `json:"repo"`
 	Branch             string `json:"branch"`
