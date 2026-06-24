@@ -1513,6 +1513,51 @@ func TestRunDoctorRepairableHintsImportedArtifactCAS(t *testing.T) {
 	}
 }
 
+func TestRunProvenanceShowsReceiveHistoryAndReceipts(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	inbox := filepath.Join(root, "peer-inbox")
+	bundlePath := filepath.Join(inbox, "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+	now := time.Date(2026, 6, 25, 0, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runReceive(root, store, registry, now, []string{"--inbox", inbox}); err != nil {
+		t.Fatalf("runReceive: %v", err)
+	}
+
+	textOut := captureStdout(t, func() error {
+		return runProvenance(root, store, []string{"--mode", "receive", "--signer", "Mallory"})
+	})
+	for _, fragment := range []string{
+		"Mode: receive",
+		"Source: " + bundlePath,
+		"Artifact CID: " + bundle.Artifact.ArtifactCID,
+		"Receipt Count: 1",
+	} {
+		if !strings.Contains(textOut, fragment) {
+			t.Fatalf("provenance output missing %q:\n%s", fragment, textOut)
+		}
+	}
+
+	jsonOut := captureStdout(t, func() error {
+		return runProvenance(root, store, []string{"--artifact", bundle.Artifact.ArtifactCID, "--json"})
+	})
+	for _, fragment := range []string{
+		"\"artifact_cid\": " + strconv.Quote(bundle.Artifact.ArtifactCID),
+		"\"mode\": \"receive\"",
+		"\"receipts\": [",
+	} {
+		if !strings.Contains(jsonOut, fragment) {
+			t.Fatalf("provenance json output missing %q:\n%s", fragment, jsonOut)
+		}
+	}
+}
+
 func TestRunIdentityRotateArchivesAndReplacesKey(t *testing.T) {
 	root := t.TempDir()
 	if _, _, _, err := identity.LoadOrCreate(root, "Alice"); err != nil {
@@ -1571,6 +1616,64 @@ func TestRunRepairRestoresImportedArtifactEnvelope(t *testing.T) {
 	}
 	if _, err := os.Stat(store.CAS.Path(bundle.Artifact.ArtifactCID)); err != nil {
 		t.Fatalf("expected repaired imported artifact CAS: %v", err)
+	}
+}
+
+func TestRunRepairRestoresImportedSupportFiles(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	inbox := filepath.Join(root, "peer-inbox")
+	bundlePath := filepath.Join(inbox, "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+	now := time.Date(2026, 6, 25, 0, 15, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runImportAt(root, store, registry, now, []string{"--in", bundlePath}); err != nil {
+		t.Fatalf("runImportAt: %v", err)
+	}
+
+	protocolMetaPath := filepath.Join(root, "data", "imported-protocols", bundle.Protocol.ProtocolPCID+".json")
+	protocolDocPath := filepath.Join(root, "data", "imported-protocols", bundle.Protocol.ProtocolPCID+".md")
+	identityPath := filepath.Join(root, "config", "imported-identities", importedIdentityFilename(bundle.Signer.Name))
+	if err := os.Remove(protocolMetaPath); err != nil {
+		t.Fatalf("remove imported protocol metadata: %v", err)
+	}
+	if err := os.Remove(protocolDocPath); err != nil {
+		t.Fatalf("remove imported protocol doc: %v", err)
+	}
+	if err := os.Remove(identityPath); err != nil {
+		t.Fatalf("remove imported signer support: %v", err)
+	}
+
+	doctorOut, doctorErr := captureStdoutWithError(t, func() error {
+		return runDoctor(root, store, registry, []string{"--repairable"})
+	})
+	if doctorErr == nil || !strings.Contains(doctorErr.Error(), "doctor found 2 error") {
+		t.Fatalf("runDoctor --repairable error = %v, want doctor failure", doctorErr)
+	}
+	if !strings.Contains(doctorOut, "run repair --import-support") {
+		t.Fatalf("doctor repairable output missing import-support hint:\n%s", doctorOut)
+	}
+
+	out := captureStdout(t, func() error {
+		return runRepair(root, store, registry, []string{"--import-support"})
+	})
+	if !strings.Contains(out, "Restored imported protocol support files: 1") ||
+		!strings.Contains(out, "Restored imported signer support files: 1") {
+		t.Fatalf("unexpected repair support output:\n%s", out)
+	}
+	if _, err := os.Stat(protocolMetaPath); err != nil {
+		t.Fatalf("expected restored imported protocol metadata: %v", err)
+	}
+	if _, err := os.Stat(protocolDocPath); err != nil {
+		t.Fatalf("expected restored imported protocol doc: %v", err)
+	}
+	if _, err := os.Stat(identityPath); err != nil {
+		t.Fatalf("expected restored imported signer support: %v", err)
 	}
 }
 

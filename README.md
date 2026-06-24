@@ -59,10 +59,12 @@ commitment-ledger inspect --json COMMITMENT-...
 commitment-ledger verify --json COMMITMENT-...
 commitment-ledger export --out /tmp/bundle.json COMMITMENT-...
 commitment-ledger import --in /tmp/bundle.json
+commitment-ledger provenance --mode receive --json
 commitment-ledger send --outbox /tmp/peer-outbox COMMITMENT-...
 commitment-ledger receive --inbox /tmp/peer-inbox --archive /tmp/peer-archive
 commitment-ledger doctor --json
-commitment-ledger repair --import-artifacts
+commitment-ledger doctor --repairable
+commitment-ledger repair --import-artifacts --import-support
 commitment-ledger identity list --json
 commitment-ledger identity rotate --name Alice
 ```
@@ -88,10 +90,11 @@ Common targets:
 - `make verify VERIFY_ARGS='--json COMMITMENT-...'`: verify a commitment ID, evidence ID, assessment ID, receipt ID, or artifact CID against local CAS bytes and signer material in text or JSON form
 - `make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'`: export an artifact bundle with related projection rows and support material
 - `make import IMPORT_ARGS='--in /tmp/bundle.json'`: import an artifact bundle and optionally install bundled support material
+- `make provenance PROVENANCE_ARGS='--mode receive --json'`: browse import and receive provenance by artifact, source path, signer, or mode
 - `make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'`: write a bundle into a peer-facing outbox directory
 - `make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'`: import all bundle files from a peer inbox directory and emit local signed receive receipts by default
 - `make doctor DOCTOR_ARGS='--repairable'`: verify local artifact, CAS, and imported support integrity with repairability hints or JSON output
-- `make repair REPAIR_ARGS='--records --protocol-cas --import-artifacts'`: rebuild Markdown projections, restore built-in protocol docs into local CAS, and restore imported artifact envelopes from saved bundle paths when possible
+- `make repair REPAIR_ARGS='--records --protocol-cas --import-artifacts --import-support'`: rebuild Markdown projections, restore built-in protocol docs into local CAS, and restore imported artifact envelopes plus imported support files from saved bundle paths when possible
 - `make identity IDENTITY_ARGS='list --json'`: inspect or rotate local signer identities
 - `make conformance VERSION=v0.1.0 SIGNER=commitment-ledger`: emit a local conformance claim
 - `make conformance-update VERSION=v0.1.0 SIGNER=commitment-ledger`: emit a conformance artifact and refresh the managed `CHANGELOG.md` entries
@@ -167,11 +170,13 @@ Observed work targets are always branch-qualified, for example
 - `status --json` now provides machine-readable repo and exchange summaries for automation.
 - `export` writes a portable bundle containing the artifact index row, envelope bytes, related projection rows, and available signer/protocol support material.
 - `import` loads that bundle back into local CAS and projections, can install bundled signer/protocol support material for later `inspect` and `verify` use, and records import provenance in `data/imports.jsonl`.
+- `provenance` browses `data/imports.jsonl` directly with filters for imported artifact CID, source path, signer, and mode, and cross-links local receive receipts when present.
 - `import` rejects conflicting commitment, evidence, assessment, signer-support, and protocol-support state instead of silently diverging local history.
 - bundle files and `config/trust-policy.json` are parsed with strict schema checks; unknown fields and incomplete required sections now fail early.
 - `send` and `receive` add a local filesystem inbox/outbox exchange path on top of the bundle format; they are still not network transport.
 - `status --exchange` and `report --imports` now surface receive-receipt coverage as well as import counts and trust state.
 - `doctor` checks local artifact index entries against CAS bytes and validates imported support files; `doctor --json` emits a stable machine-readable summary and `doctor --repairable` separates repairable findings from non-repairable ones.
+- `repair --import-support` restores imported signer and protocol support files from recorded bundle source paths when those support files have gone missing.
 - `repair` rebuilds Markdown records from JSONL state, restores built-in frozen protocol docs into local CAS, and can restore missing imported artifact envelopes from recorded bundle source paths.
 - `identity list`, `identity show`, and `identity rotate` provide a basic local signer lifecycle workflow with archive copies of rotated keys.
 

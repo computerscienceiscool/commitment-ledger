@@ -29,10 +29,11 @@ make conformance VERSION=v0.1.0 SIGNER=commitment-ledger
 make conformance-update VERSION=v0.1.0 SIGNER=commitment-ledger
 make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'
 make import IMPORT_ARGS='--in /tmp/bundle.json'
+make provenance PROVENANCE_ARGS='--mode receive --json'
 make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'
 make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'
 make doctor DOCTOR_ARGS='--repairable'
-make repair REPAIR_ARGS='--records --protocol-cas --import-artifacts'
+make repair REPAIR_ARGS='--records --protocol-cas --import-artifacts --import-support'
 make identity IDENTITY_ARGS='list --json'
 ```
 
@@ -286,6 +287,27 @@ deliberately keep signer/protocol support separate.
 Every successful `import` also appends an import provenance row to
 `data/imports.jsonl`.
 
+### `provenance`
+
+```bash
+go run ./cmd/commitment-ledger provenance --mode receive
+go run ./cmd/commitment-ledger provenance --artifact bafy...
+go run ./cmd/commitment-ledger provenance --source /tmp/peer-inbox/bundle.json --json
+go run ./cmd/commitment-ledger provenance --signer Mallory
+```
+
+`provenance` is the direct history browser over local import and receive rows.
+
+You can filter by:
+
+- imported artifact CID
+- source path
+- artifact signer
+- mode such as `import` or `receive`
+
+The output also shows any local receive-receipt artifacts that acknowledge the
+imported artifact.
+
 ### `send`
 
 ```bash
@@ -351,6 +373,7 @@ go run ./cmd/commitment-ledger repair
 go run ./cmd/commitment-ledger repair --records
 go run ./cmd/commitment-ledger repair --protocol-cas
 go run ./cmd/commitment-ledger repair --import-artifacts
+go run ./cmd/commitment-ledger repair --import-support
 ```
 
 `repair` is intentionally conservative. Today it can:
@@ -358,6 +381,7 @@ go run ./cmd/commitment-ledger repair --import-artifacts
 - rebuild commitment and assessment Markdown projection files from JSONL state
 - restore built-in frozen protocol docs into local CAS
 - restore missing imported artifact envelopes from previously recorded bundle source paths
+- restore missing imported signer and protocol support files from previously recorded bundle source paths
 
 It still does not resolve projection conflicts or synthesize bundle sources that
 no longer exist locally.

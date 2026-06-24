@@ -74,6 +74,8 @@ func main() {
 		err = runExport(root, store, registry, now, os.Args[2:])
 	case "import":
 		err = runImportAt(root, store, registry, now, os.Args[2:])
+	case "provenance":
+		err = runProvenance(root, store, os.Args[2:])
 	case "send":
 		err = runSend(root, store, registry, now, os.Args[2:])
 	case "receive":
@@ -95,7 +97,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report|inspect|verify|export|import|send|receive|doctor|repair|identity> [flags]")
+	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report|inspect|verify|export|import|provenance|send|receive|doctor|repair|identity> [flags]")
 }
 
 func runScan(root string, store *ledger.Store, registry protocol.Registry, now time.Time, args []string) error {
@@ -829,6 +831,55 @@ func runImportAt(root string, store *ledger.Store, registry protocol.Registry, n
 	return err
 }
 
+func runProvenance(root string, store *ledger.Store, args []string) error {
+	fs := flag.NewFlagSet("provenance", flag.ContinueOnError)
+	artifactCID := fs.String("artifact", "", "filter by imported artifact CID")
+	sourcePath := fs.String("source", "", "filter by source path")
+	signer := fs.String("signer", "", "filter by artifact signer")
+	mode := fs.String("mode", "", "filter by import mode")
+	jsonOut := fs.Bool("json", false, "emit JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("provenance does not accept positional references")
+	}
+	imports, err := store.LoadImports()
+	if err != nil {
+		return err
+	}
+	artifacts, err := store.LoadArtifacts()
+	if err != nil {
+		return err
+	}
+	rows := buildProvenanceRows(imports, artifacts, *artifactCID, *sourcePath, *signer, *mode)
+	if *jsonOut {
+		return printJSON(rows)
+	}
+	for _, row := range rows {
+		fmt.Printf("Imported At: %s\n", row.ImportedAt)
+		fmt.Printf("Mode: %s\n", row.Mode)
+		fmt.Printf("Source: %s\n", row.SourcePath)
+		fmt.Printf("Artifact CID: %s\n", row.ArtifactCID)
+		fmt.Printf("Related ID: %s\n", emptyFallback(row.RelatedID, "(none)"))
+		fmt.Printf("Protocol pCID: %s\n", row.ProtocolPCID)
+		fmt.Printf("Signer: %s\n", emptyFallback(row.Signer, "(none)"))
+		fmt.Printf("Support Installed: %s\n", yesNo(row.SupportInstalled))
+		if row.InstalledProtocolPCID != "" {
+			fmt.Printf("Installed Protocol pCID: %s\n", row.InstalledProtocolPCID)
+		}
+		if row.InstalledSignerIdentity != "" {
+			fmt.Printf("Installed Signer Identity: %s\n", row.InstalledSignerIdentity)
+		}
+		fmt.Printf("Receipt Count: %d\n", len(row.Receipts))
+		for _, receipt := range row.Receipts {
+			fmt.Printf("Receipt: %s by %s at %s\n", receipt.ArtifactCID, receipt.Signer, receipt.ObservedAt)
+		}
+		fmt.Println()
+	}
+	return nil
+}
+
 func runSend(root string, store *ledger.Store, registry protocol.Registry, now time.Time, args []string) error {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	outbox := fs.String("outbox", "", "peer outbox directory")
@@ -981,16 +1032,18 @@ func runRepair(root string, store *ledger.Store, registry protocol.Registry, arg
 	records := fs.Bool("records", false, "rewrite Markdown projection records from JSONL state")
 	protocolCAS := fs.Bool("protocol-cas", false, "restore built-in frozen protocol docs into local CAS")
 	importArtifacts := fs.Bool("import-artifacts", false, "restore imported artifact envelopes from bundle source paths when possible")
+	importSupport := fs.Bool("import-support", false, "restore imported signer and protocol support from bundle source paths when possible")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("repair does not accept positional references")
 	}
-	if !*records && !*protocolCAS && !*importArtifacts {
+	if !*records && !*protocolCAS && !*importArtifacts && !*importSupport {
 		*records = true
 		*protocolCAS = true
 		*importArtifacts = true
+		*importSupport = true
 	}
 
 	var rewrittenCommitments int
@@ -1038,11 +1091,23 @@ func runRepair(root string, store *ledger.Store, registry protocol.Registry, arg
 		}
 		restoredImportedArtifacts = count
 	}
+	restoredImportedProtocols := 0
+	restoredImportedSigners := 0
+	if *importSupport {
+		protocols, signers, err := restoreImportedSupport(root, store)
+		if err != nil {
+			return err
+		}
+		restoredImportedProtocols = protocols
+		restoredImportedSigners = signers
+	}
 
 	fmt.Printf("Rewrote commitment records: %d\n", rewrittenCommitments)
 	fmt.Printf("Rewrote assessment records: %d\n", rewrittenAssessments)
 	fmt.Printf("Restored built-in protocol docs to CAS: %d\n", restoredProtocols)
 	fmt.Printf("Restored imported artifact envelopes: %d\n", restoredImportedArtifacts)
+	fmt.Printf("Restored imported protocol support files: %d\n", restoredImportedProtocols)
+	fmt.Printf("Restored imported signer support files: %d\n", restoredImportedSigners)
 	return nil
 }
 
@@ -1308,6 +1373,93 @@ func restoreImportedArtifacts(store *ledger.Store) (int, error) {
 	return restored, nil
 }
 
+func restoreImportedSupport(root string, store *ledger.Store) (int, int, error) {
+	imports, err := store.LoadImports()
+	if err != nil {
+		return 0, 0, err
+	}
+	restoredProtocols := 0
+	restoredSigners := 0
+	seenProtocols := map[string]struct{}{}
+	seenSigners := map[string]struct{}{}
+	for i := len(imports) - 1; i >= 0; i-- {
+		record := imports[i]
+		if record.SourcePath == "" {
+			continue
+		}
+		if record.InstalledProtocolPCID != "" {
+			if _, ok := seenProtocols[record.InstalledProtocolPCID]; !ok {
+				seenProtocols[record.InstalledProtocolPCID] = struct{}{}
+				if !importedProtocolHealthy(root, record.InstalledProtocolPCID) {
+					bundle, err := parseBundleAtPath(record.SourcePath)
+					if err != nil {
+						return restoredProtocols, restoredSigners, err
+					}
+					if bundle.Protocol == nil || bundle.Protocol.ProtocolPCID != record.InstalledProtocolPCID {
+						return restoredProtocols, restoredSigners, fmt.Errorf("bundle %q missing protocol support for %s", record.SourcePath, record.InstalledProtocolPCID)
+					}
+					if err := installProtocolSupport(root, *bundle.Protocol); err != nil {
+						return restoredProtocols, restoredSigners, err
+					}
+					restoredProtocols++
+				}
+			}
+		}
+		if record.InstalledSignerIdentity != "" {
+			if _, ok := seenSigners[record.InstalledSignerIdentity]; !ok {
+				seenSigners[record.InstalledSignerIdentity] = struct{}{}
+				if !importedSignerHealthy(root, record.InstalledSignerIdentity) {
+					bundle, err := parseBundleAtPath(record.SourcePath)
+					if err != nil {
+						return restoredProtocols, restoredSigners, err
+					}
+					if bundle.Signer == nil || bundle.Signer.Name != record.InstalledSignerIdentity {
+						return restoredProtocols, restoredSigners, fmt.Errorf("bundle %q missing signer support for %s", record.SourcePath, record.InstalledSignerIdentity)
+					}
+					if err := installSignerSupport(root, *bundle.Signer); err != nil {
+						return restoredProtocols, restoredSigners, err
+					}
+					restoredSigners++
+				}
+			}
+		}
+	}
+	return restoredProtocols, restoredSigners, nil
+}
+
+func parseBundleAtPath(path string) (exchange.Bundle, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return exchange.Bundle{}, fmt.Errorf("read import bundle %q: %w", path, err)
+	}
+	bundle, err := exchange.ParseBundle(data)
+	if err != nil {
+		return exchange.Bundle{}, fmt.Errorf("parse import bundle %q: %w", path, err)
+	}
+	return bundle, nil
+}
+
+func importedProtocolHealthy(root string, pcid string) bool {
+	support, err := loadImportedProtocolSupport(root, pcid)
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(importedProtocolDocPath(root, pcid))
+	if err != nil {
+		return false
+	}
+	return protocol.SupportPCID(data) == support.ProtocolPCID
+}
+
+func importedSignerHealthy(root string, name string) bool {
+	path := filepath.Join(root, "config", "imported-identities", importedIdentityFilename(name))
+	if _, err := os.Stat(path); err != nil {
+		return false
+	}
+	_, _, err := identity.LoadVerifier(root, name)
+	return err == nil
+}
+
 func writeRepairTextFile(path string, body string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("mkdir for %q: %w", path, err)
@@ -1543,6 +1695,21 @@ type verifyResult struct {
 	OverallTrusted      bool                `json:"overall_trusted"`
 }
 
+type provenanceRow struct {
+	ImportedAt              string                 `json:"imported_at"`
+	Mode                    string                 `json:"mode"`
+	SourcePath              string                 `json:"source_path"`
+	ArtifactCID             string                 `json:"artifact_cid"`
+	RelatedID               string                 `json:"related_id,omitempty"`
+	ProtocolPCID            string                 `json:"protocol_pcid"`
+	Signer                  string                 `json:"signer,omitempty"`
+	SupportInstalled        bool                   `json:"support_installed"`
+	InstalledProtocolPCID   string                 `json:"installed_protocol_pcid,omitempty"`
+	InstalledSignerIdentity string                 `json:"installed_signer_identity,omitempty"`
+	ReceiptArtifactCID      string                 `json:"receipt_artifact_cid,omitempty"`
+	Receipts                []model.ArtifactRecord `json:"receipts,omitempty"`
+}
+
 func inspectReference(root string, registry protocol.Registry, ref string, artifacts []model.ArtifactRecord, commitments map[string]model.Commitment, evidenceItems []model.Evidence, assessments []model.Assessment, imports []model.ImportRecord) (inspectView, error) {
 	artifactByCID := artifactIndexByCID(artifacts)
 
@@ -1636,6 +1803,41 @@ func resolveArtifactReference(ref string, artifacts []model.ArtifactRecord, comm
 		}
 	}
 	return model.ArtifactRecord{}, fmt.Errorf("unknown verify reference %q", ref)
+}
+
+func buildProvenanceRows(imports []model.ImportRecord, artifacts []model.ArtifactRecord, artifactCID string, sourcePath string, signer string, mode string) []provenanceRow {
+	receipts := receiptArtifactsByImportedArtifact(artifacts)
+	rows := make([]provenanceRow, 0, len(imports))
+	for i := len(imports) - 1; i >= 0; i-- {
+		record := imports[i]
+		if artifactCID != "" && record.ArtifactCID != artifactCID {
+			continue
+		}
+		if sourcePath != "" && record.SourcePath != sourcePath {
+			continue
+		}
+		if signer != "" && record.Signer != signer {
+			continue
+		}
+		if mode != "" && record.Mode != mode {
+			continue
+		}
+		rows = append(rows, provenanceRow{
+			ImportedAt:              record.ImportedAt,
+			Mode:                    record.Mode,
+			SourcePath:              record.SourcePath,
+			ArtifactCID:             record.ArtifactCID,
+			RelatedID:               record.RelatedID,
+			ProtocolPCID:            record.ProtocolPCID,
+			Signer:                  record.Signer,
+			SupportInstalled:        record.SupportInstalled,
+			InstalledProtocolPCID:   record.InstalledProtocolPCID,
+			InstalledSignerIdentity: record.InstalledSignerIdentity,
+			ReceiptArtifactCID:      record.ReceiptArtifactCID,
+			Receipts:                receipts[record.ArtifactCID],
+		})
+	}
+	return rows
 }
 
 func artifactExists(artifacts []model.ArtifactRecord, artifactCID string) bool {
@@ -2433,6 +2635,22 @@ func doctorReport(root string, store *ledger.Store, registry protocol.Registry) 
 		NonRepairableErrors: []string{},
 		RepairHints:         []string{},
 	}
+	imports, err := store.LoadImports()
+	if err != nil {
+		return summary, err
+	}
+	importedArtifacts := map[string]struct{}{}
+	importedProtocols := map[string]struct{}{}
+	importedSigners := map[string]struct{}{}
+	for _, record := range imports {
+		importedArtifacts[record.ArtifactCID] = struct{}{}
+		if record.InstalledProtocolPCID != "" {
+			importedProtocols[record.InstalledProtocolPCID] = struct{}{}
+		}
+		if record.InstalledSignerIdentity != "" {
+			importedSigners[record.InstalledSignerIdentity] = struct{}{}
+		}
+	}
 	artifacts, err := store.LoadArtifacts()
 	if err != nil {
 		return summary, err
@@ -2442,7 +2660,7 @@ func doctorReport(root string, store *ledger.Store, registry protocol.Registry) 
 		envelope, err := store.CAS.Get(artifact.ArtifactCID)
 		if err != nil {
 			message := fmt.Sprintf("artifact %s missing CAS bytes: %v", artifact.ArtifactCID, err)
-			repairable := artifactImported(artifact.ArtifactCID, store)
+			_, repairable := importedArtifacts[artifact.ArtifactCID]
 			hint := ""
 			if repairable {
 				hint = "run repair --import-artifacts to restore missing imported artifact envelopes from saved bundle paths"
@@ -2468,15 +2686,16 @@ func doctorReport(root string, store *ledger.Store, registry protocol.Registry) 
 			addDoctorError(&summary, fmt.Sprintf("artifact %s proof CID mismatch", artifact.ArtifactCID), false, "")
 		}
 	}
-	if err := doctorIdentityDir(root, filepath.Join(root, "config", "identities"), true, &summary); err != nil {
+	if err := doctorIdentityDir(root, filepath.Join(root, "config", "identities"), true, &summary, importedSigners); err != nil {
 		return summary, err
 	}
-	if err := doctorIdentityDir(root, filepath.Join(root, "config", "imported-identities"), false, &summary); err != nil {
+	if err := doctorIdentityDir(root, filepath.Join(root, "config", "imported-identities"), false, &summary, importedSigners); err != nil {
 		return summary, err
 	}
-	if err := doctorImportedProtocols(root, &summary); err != nil {
+	if err := doctorImportedProtocols(root, &summary, importedProtocols); err != nil {
 		return summary, err
 	}
+	checkExpectedImportedSupport(root, &summary, importedProtocols, importedSigners)
 	if _, err := os.Stat(changelog.Path(root)); err != nil {
 		if os.IsNotExist(err) {
 			summary.Warnings = append(summary.Warnings, "CHANGELOG.md not found")
@@ -2500,20 +2719,7 @@ func addDoctorError(summary *doctorSummary, message string, repairable bool, hin
 	}
 }
 
-func artifactImported(artifactCID string, store *ledger.Store) bool {
-	imports, err := store.LoadImports()
-	if err != nil {
-		return false
-	}
-	for _, record := range imports {
-		if record.ArtifactCID == artifactCID {
-			return true
-		}
-	}
-	return false
-}
-
-func doctorIdentityDir(root string, dir string, primary bool, summary *doctorSummary) error {
+func doctorIdentityDir(root string, dir string, primary bool, summary *doctorSummary, importedSigners map[string]struct{}) error {
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
 		return nil
@@ -2535,7 +2741,12 @@ func doctorIdentityDir(root string, dir string, primary bool, summary *doctorSum
 			continue
 		}
 		if _, _, err := identity.LoadVerifier(root, name); err != nil {
-			addDoctorError(summary, fmt.Sprintf("imported identity %s invalid: %v", name, err), false, "")
+			_, repairable := importedSigners[name]
+			hint := ""
+			if repairable {
+				hint = "run repair --import-support to restore imported signer support files from saved bundle paths"
+			}
+			addDoctorError(summary, fmt.Sprintf("imported identity %s invalid: %v", name, err), repairable, hint)
 			continue
 		}
 		summary.ImportedIdentities++
@@ -2543,7 +2754,7 @@ func doctorIdentityDir(root string, dir string, primary bool, summary *doctorSum
 	return nil
 }
 
-func doctorImportedProtocols(root string, summary *doctorSummary) error {
+func doctorImportedProtocols(root string, summary *doctorSummary, importedProtocols map[string]struct{}) error {
 	dir := filepath.Join(root, "data", "imported-protocols")
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
@@ -2559,21 +2770,57 @@ func doctorImportedProtocols(root string, summary *doctorSummary) error {
 		pcid := strings.TrimSuffix(entry.Name(), ".json")
 		support, err := loadImportedProtocolSupport(root, pcid)
 		if err != nil {
-			addDoctorError(summary, fmt.Sprintf("imported protocol %s metadata invalid: %v", pcid, err), false, "")
+			_, repairable := importedProtocols[pcid]
+			hint := ""
+			if repairable {
+				hint = "run repair --import-support to restore imported protocol support files from saved bundle paths"
+			}
+			addDoctorError(summary, fmt.Sprintf("imported protocol %s metadata invalid: %v", pcid, err), repairable, hint)
 			continue
 		}
 		data, err := os.ReadFile(importedProtocolDocPath(root, pcid))
 		if err != nil {
-			addDoctorError(summary, fmt.Sprintf("imported protocol %s doc missing: %v", pcid, err), false, "")
+			_, repairable := importedProtocols[pcid]
+			hint := ""
+			if repairable {
+				hint = "run repair --import-support to restore imported protocol support files from saved bundle paths"
+			}
+			addDoctorError(summary, fmt.Sprintf("imported protocol %s doc missing: %v", pcid, err), repairable, hint)
 			continue
 		}
 		if got := protocol.SupportPCID(data); got != support.ProtocolPCID {
-			addDoctorError(summary, fmt.Sprintf("imported protocol %s pCID mismatch", pcid), false, "")
+			_, repairable := importedProtocols[pcid]
+			hint := ""
+			if repairable {
+				hint = "run repair --import-support to restore imported protocol support files from saved bundle paths"
+			}
+			addDoctorError(summary, fmt.Sprintf("imported protocol %s pCID mismatch", pcid), repairable, hint)
 			continue
 		}
 		summary.ImportedProtocols++
 	}
 	return nil
+}
+
+func checkExpectedImportedSupport(root string, summary *doctorSummary, importedProtocols map[string]struct{}, importedSigners map[string]struct{}) {
+	for pcid := range importedProtocols {
+		metaPath := importedProtocolMetaPath(root, pcid)
+		docPath := importedProtocolDocPath(root, pcid)
+		if _, err := os.Stat(metaPath); err != nil || statFileMissing(docPath) {
+			addDoctorError(summary, fmt.Sprintf("imported protocol %s support files missing", pcid), true, "run repair --import-support to restore imported protocol support files from saved bundle paths")
+		}
+	}
+	for name := range importedSigners {
+		path := filepath.Join(root, "config", "imported-identities", importedIdentityFilename(name))
+		if statFileMissing(path) {
+			addDoctorError(summary, fmt.Sprintf("imported identity %s support file missing", name), true, "run repair --import-support to restore imported signer support files from saved bundle paths")
+		}
+	}
+}
+
+func statFileMissing(path string) bool {
+	_, err := os.Stat(path)
+	return err != nil
 }
 
 func emitCommitmentArtifact(root string, store *ledger.Store, registry protocol.Registry, item model.Commitment, promisee string) (model.Commitment, error) {
