@@ -328,7 +328,7 @@ It is still limited by current implementation scope:
 
 - no remote peer exchange yet
 - no shared network transport yet
-- no import of artifacts from another running Commitment Ledger peer yet
+- no automatic peer-to-peer artifact import or sync yet; only manual bundle export/import
 - trust remains a documented future direction rather than a rich current feature
 
 So this is a strong local-repo demo, not yet a full multi-peer PromiseGrid

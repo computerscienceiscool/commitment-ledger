@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"commitment-ledger/internal/commitment"
 	"commitment-ledger/internal/config"
 	"commitment-ledger/internal/evidence"
+	"commitment-ledger/internal/exchange"
 	"commitment-ledger/internal/gitrepo"
 	"commitment-ledger/internal/grid"
 	"commitment-ledger/internal/identity"
@@ -63,6 +66,10 @@ func main() {
 		err = runInspect(root, store, registry, os.Args[2:])
 	case "verify":
 		err = runVerify(root, store, registry, os.Args[2:])
+	case "export":
+		err = runExport(root, store, registry, now, os.Args[2:])
+	case "import":
+		err = runImport(root, store, registry, os.Args[2:])
 	default:
 		usage()
 		err = fmt.Errorf("unknown command %q", os.Args[1])
@@ -74,7 +81,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report|inspect|verify> [flags]")
+	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report|inspect|verify|export|import> [flags]")
 }
 
 func runScan(root string, store *ledger.Store, registry protocol.Registry, now time.Time, args []string) error {
@@ -626,7 +633,7 @@ func runVerify(root string, store *ledger.Store, registry protocol.Registry, arg
 	if decoded.Proof.KeyID != artifact.SignerKeyID {
 		return fmt.Errorf("signer key mismatch: index=%s proof=%s", artifact.SignerKeyID, decoded.Proof.KeyID)
 	}
-	ident, _, _, err := identity.Load(root, decoded.Proof.Signer)
+	ident, _, err := identity.LoadVerifier(root, decoded.Proof.Signer)
 	if err != nil {
 		return fmt.Errorf("load signer identity %q: %w", decoded.Proof.Signer, err)
 	}
@@ -640,7 +647,190 @@ func runVerify(root string, store *ledger.Store, registry protocol.Registry, arg
 		return err
 	}
 
-	printVerifyResult(registry, artifact, decoded, ident)
+	printVerifyResult(root, registry, artifact, decoded, ident)
+	return nil
+}
+
+func runExport(root string, store *ledger.Store, registry protocol.Registry, now time.Time, args []string) error {
+	fs := flag.NewFlagSet("export", flag.ContinueOnError)
+	outPath := fs.String("out", "", "bundle output path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *outPath == "" {
+		return fmt.Errorf("export requires --out")
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("export requires exactly one reference")
+	}
+	ref := fs.Arg(0)
+
+	artifacts, err := store.LoadArtifacts()
+	if err != nil {
+		return err
+	}
+	commitments, err := store.LoadLatestCommitments()
+	if err != nil {
+		return err
+	}
+	evidenceItems, err := store.LoadEvidence()
+	if err != nil {
+		return err
+	}
+	assessments, err := store.LoadAssessments()
+	if err != nil {
+		return err
+	}
+	artifact, err := resolveArtifactReference(ref, artifacts, commitments, evidenceItems, assessments)
+	if err != nil {
+		return err
+	}
+	envelope, err := store.CAS.Get(artifact.ArtifactCID)
+	if err != nil {
+		return err
+	}
+	bundle, err := buildBundle(root, registry, now, artifact, envelope, commitments, evidenceItems, assessments)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(bundle, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal bundle: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(*outPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir export path: %w", err)
+	}
+	if err := os.WriteFile(*outPath, data, 0o644); err != nil {
+		return fmt.Errorf("write bundle %q: %w", *outPath, err)
+	}
+	fmt.Printf("Exported %s to %s\n", emptyFallback(artifact.RelatedID, artifact.ArtifactCID), *outPath)
+	return nil
+}
+
+func runImport(root string, store *ledger.Store, registry protocol.Registry, args []string) error {
+	fs := flag.NewFlagSet("import", flag.ContinueOnError)
+	inPath := fs.String("in", "", "bundle input path")
+	installSupport := fs.Bool("install-support", true, "install bundled protocol and signer support")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *inPath == "" {
+		return fmt.Errorf("import requires --in")
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("import does not accept positional references")
+	}
+	data, err := os.ReadFile(*inPath)
+	if err != nil {
+		return fmt.Errorf("read bundle %q: %w", *inPath, err)
+	}
+	var bundle exchange.Bundle
+	if err := json.Unmarshal(data, &bundle); err != nil {
+		return fmt.Errorf("parse bundle %q: %w", *inPath, err)
+	}
+	if bundle.Version != exchange.BundleVersion {
+		return fmt.Errorf("unsupported bundle version %q", bundle.Version)
+	}
+	envelope, err := base64.StdEncoding.DecodeString(bundle.Envelope)
+	if err != nil {
+		return fmt.Errorf("decode bundle envelope: %w", err)
+	}
+	decoded, err := grid.DecodeEnvelope(envelope)
+	if err != nil {
+		return err
+	}
+	if decoded.EnvelopeCID != bundle.Artifact.ArtifactCID {
+		return fmt.Errorf("bundle artifact cid mismatch: record=%s decoded=%s", bundle.Artifact.ArtifactCID, decoded.EnvelopeCID)
+	}
+	if decoded.ProtocolPCID != bundle.Artifact.ProtocolPCID {
+		return fmt.Errorf("bundle protocol pCID mismatch: record=%s decoded=%s", bundle.Artifact.ProtocolPCID, decoded.ProtocolPCID)
+	}
+	if decoded.PayloadCID != bundle.Artifact.PayloadCID {
+		return fmt.Errorf("bundle payload cid mismatch: record=%s decoded=%s", bundle.Artifact.PayloadCID, decoded.PayloadCID)
+	}
+	if decoded.ProofCID != bundle.Artifact.ProofCID {
+		return fmt.Errorf("bundle proof cid mismatch: record=%s decoded=%s", bundle.Artifact.ProofCID, decoded.ProofCID)
+	}
+
+	if *installSupport {
+		if bundle.Protocol != nil {
+			if err := installProtocolSupport(root, *bundle.Protocol); err != nil {
+				return err
+			}
+		}
+		if bundle.Signer != nil {
+			if err := installSignerSupport(root, *bundle.Signer); err != nil {
+				return err
+			}
+		}
+	}
+	if _, err := store.CAS.Put(envelope); err != nil {
+		return err
+	}
+
+	artifacts, err := store.LoadArtifacts()
+	if err != nil {
+		return err
+	}
+	if !artifactExists(artifacts, bundle.Artifact.ArtifactCID) {
+		if err := store.AppendArtifact(bundle.Artifact, envelope); err != nil {
+			return err
+		}
+	}
+
+	commitments, err := store.LoadLatestCommitments()
+	if err != nil {
+		return err
+	}
+	if bundle.Commitment != nil {
+		if current, ok := commitments[bundle.Commitment.CommitmentID]; !ok || !sameCommitment(current, *bundle.Commitment) {
+			if err := store.AppendCommitment(*bundle.Commitment); err != nil {
+				return err
+			}
+			commitments[bundle.Commitment.CommitmentID] = *bundle.Commitment
+		}
+	}
+
+	if bundle.Evidence != nil {
+		existingEvidence, err := store.LoadEvidence()
+		if err != nil {
+			return err
+		}
+		if !evidenceExists(existingEvidence, bundle.Evidence.EvidenceID) {
+			if err := store.AppendEvidence(*bundle.Evidence); err != nil {
+				return err
+			}
+		}
+	}
+
+	if bundle.Assessment != nil {
+		existingAssessments, err := store.LoadAssessments()
+		if err != nil {
+			return err
+		}
+		if !assessmentExists(existingAssessments, bundle.Assessment.AssessmentID) {
+			commitmentRecord := model.Commitment{}
+			if bundle.Commitment != nil {
+				commitmentRecord = *bundle.Commitment
+			} else if current, ok := commitments[bundle.Assessment.CommitmentID]; ok {
+				commitmentRecord = current
+			}
+			if commitmentRecord.CommitmentID == "" {
+				return fmt.Errorf("assessment import requires related commitment projection")
+			}
+			if err := store.AppendAssessment(*bundle.Assessment, commitmentRecord); err != nil {
+				return err
+			}
+		}
+	}
+
+	fmt.Printf("Imported %s from %s\n", emptyFallback(bundle.Artifact.RelatedID, bundle.Artifact.ArtifactCID), *inPath)
+	if *installSupport {
+		fmt.Println("Support material installed: yes")
+	} else {
+		fmt.Println("Support material installed: no")
+	}
+	_ = registry
 	return nil
 }
 
@@ -697,7 +887,7 @@ func inspectReference(root string, registry protocol.Registry, ref string, artif
 				}
 			}
 		}
-		return buildArtifactInspectView(registry, ref, artifact), nil
+		return buildArtifactInspectView(root, registry, ref, artifact), nil
 	}
 
 	return inspectView{}, fmt.Errorf("unknown inspect reference %q", ref)
@@ -738,8 +928,216 @@ func resolveArtifactReference(ref string, artifacts []model.ArtifactRecord, comm
 	return model.ArtifactRecord{}, fmt.Errorf("unknown verify reference %q", ref)
 }
 
+func artifactExists(artifacts []model.ArtifactRecord, artifactCID string) bool {
+	for _, item := range artifacts {
+		if item.ArtifactCID == artifactCID {
+			return true
+		}
+	}
+	return false
+}
+
+func evidenceExists(items []model.Evidence, evidenceID string) bool {
+	for _, item := range items {
+		if item.EvidenceID == evidenceID {
+			return true
+		}
+	}
+	return false
+}
+
+func assessmentExists(items []model.Assessment, assessmentID string) bool {
+	for _, item := range items {
+		if item.AssessmentID == assessmentID {
+			return true
+		}
+	}
+	return false
+}
+
+func sameCommitment(a model.Commitment, b model.Commitment) bool {
+	left, _ := json.Marshal(a)
+	right, _ := json.Marshal(b)
+	return string(left) == string(right)
+}
+
+func buildBundle(root string, registry protocol.Registry, now time.Time, artifact model.ArtifactRecord, envelope []byte, commitments map[string]model.Commitment, evidenceItems []model.Evidence, assessments []model.Assessment) (exchange.Bundle, error) {
+	bundle := exchange.Bundle{
+		Version:    exchange.BundleVersion,
+		ExportedAt: now.Format(time.RFC3339),
+		Artifact:   artifact,
+		Envelope:   base64.StdEncoding.EncodeToString(envelope),
+	}
+	if artifact.ProtocolPCID != "" {
+		support, err := exportProtocolSupport(root, registry, artifact.ProtocolPCID)
+		if err == nil {
+			bundle.Protocol = support
+		}
+	}
+	if artifact.Signer != "" {
+		support, err := exportSignerSupport(root, artifact.Signer)
+		if err == nil {
+			bundle.Signer = support
+		}
+	}
+	switch artifact.Kind {
+	case "commitment_promise":
+		if item, ok := commitments[artifact.RelatedID]; ok {
+			copy := item
+			bundle.Commitment = &copy
+		}
+	case "commitment_evidence":
+		for _, item := range evidenceItems {
+			if item.EvidenceID != artifact.RelatedID {
+				continue
+			}
+			copy := item
+			bundle.Evidence = &copy
+			if commitment, ok := commitments[item.CommitmentID]; ok {
+				commitmentCopy := commitment
+				bundle.Commitment = &commitmentCopy
+			}
+			break
+		}
+	case "commitment_assessment":
+		for _, item := range assessments {
+			if item.AssessmentID != artifact.RelatedID {
+				continue
+			}
+			copy := item
+			bundle.Assessment = &copy
+			if commitment, ok := commitments[item.CommitmentID]; ok {
+				commitmentCopy := commitment
+				bundle.Commitment = &commitmentCopy
+			}
+			break
+		}
+	}
+	return bundle, nil
+}
+
+func exportProtocolSupport(root string, registry protocol.Registry, pcid string) (*exchange.ProtocolSupport, error) {
+	if spec, ok := registry.FindByPCID(pcid); ok {
+		return &exchange.ProtocolSupport{
+			Name:          spec.Name,
+			ProtocolPCID:  spec.PCID,
+			DocCID:        spec.DocCID,
+			DocumentBytes: base64.StdEncoding.EncodeToString(spec.Bytes),
+		}, nil
+	}
+	support, err := loadImportedProtocolSupport(root, pcid)
+	if err != nil {
+		return nil, err
+	}
+	return &support, nil
+}
+
+func exportSignerSupport(root string, name string) (*exchange.SignerSupport, error) {
+	ident, pub, err := identity.LoadVerifier(root, name)
+	if err != nil {
+		return nil, err
+	}
+	return &exchange.SignerSupport{
+		Name:      ident.Name,
+		KeyID:     ident.KeyID,
+		PublicKey: base64.StdEncoding.EncodeToString(pub),
+	}, nil
+}
+
+func installProtocolSupport(root string, support exchange.ProtocolSupport) error {
+	data, err := base64.StdEncoding.DecodeString(support.DocumentBytes)
+	if err != nil {
+		return fmt.Errorf("decode protocol support bytes: %w", err)
+	}
+	if got := protocol.SupportPCID(data); got != support.ProtocolPCID {
+		return fmt.Errorf("protocol support pCID mismatch: bundle=%s computed=%s", support.ProtocolPCID, got)
+	}
+	docPath := importedProtocolDocPath(root, support.ProtocolPCID)
+	if err := os.MkdirAll(filepath.Dir(docPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir imported protocol dir: %w", err)
+	}
+	if err := os.WriteFile(docPath, data, 0o644); err != nil {
+		return fmt.Errorf("write imported protocol doc: %w", err)
+	}
+	metaPath := importedProtocolMetaPath(root, support.ProtocolPCID)
+	meta, err := json.MarshalIndent(support, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal protocol support: %w", err)
+	}
+	if err := os.WriteFile(metaPath, meta, 0o644); err != nil {
+		return fmt.Errorf("write imported protocol metadata: %w", err)
+	}
+	return nil
+}
+
+func installSignerSupport(root string, support exchange.SignerSupport) error {
+	path := filepath.Join(root, "config", "imported-identities", importedIdentityFilename(support.Name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir imported identity dir: %w", err)
+	}
+	payload, err := json.MarshalIndent(identity.Identity{
+		Name:      support.Name,
+		KeyID:     support.KeyID,
+		PublicKey: support.PublicKey,
+	}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal signer support: %w", err)
+	}
+	if err := os.WriteFile(path, payload, 0o644); err != nil {
+		return fmt.Errorf("write imported identity: %w", err)
+	}
+	return nil
+}
+
+func importedIdentityFilename(name string) string {
+	return filepath.Base(identityPathForName(name))
+}
+
+func importedProtocolDocPath(root string, pcid string) string {
+	return filepath.Join(root, "data", "imported-protocols", pcid+".md")
+}
+
+func importedProtocolMetaPath(root string, pcid string) string {
+	return filepath.Join(root, "data", "imported-protocols", pcid+".json")
+}
+
+func loadImportedProtocolSupport(root string, pcid string) (exchange.ProtocolSupport, error) {
+	metaPath := importedProtocolMetaPath(root, pcid)
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return exchange.ProtocolSupport{}, fmt.Errorf("read imported protocol metadata %q: %w", metaPath, err)
+	}
+	var support exchange.ProtocolSupport
+	if err := json.Unmarshal(data, &support); err != nil {
+		return exchange.ProtocolSupport{}, fmt.Errorf("parse imported protocol metadata %q: %w", metaPath, err)
+	}
+	return support, nil
+}
+
+type protocolLocation struct {
+	Name     string
+	Path     string
+	Matched  bool
+	Imported bool
+}
+
+func resolveProtocolLocation(root string, registry protocol.Registry, pcid string) protocolLocation {
+	if spec, ok := registry.FindByPCID(pcid); ok {
+		return protocolLocation{Name: spec.Name, Path: spec.Path, Matched: true}
+	}
+	if support, err := loadImportedProtocolSupport(root, pcid); err == nil {
+		return protocolLocation{
+			Name:     support.Name,
+			Path:     importedProtocolDocPath(root, pcid),
+			Matched:  true,
+			Imported: true,
+		}
+	}
+	return protocolLocation{}
+}
+
 func buildCommitmentInspectView(root string, registry protocol.Registry, ref string, item model.Commitment, artifact model.ArtifactRecord) inspectView {
-	view := buildArtifactInspectView(registry, ref, artifact)
+	view := buildArtifactInspectView(root, registry, ref, artifact)
 	view.Kind = "commitment_promise"
 	view.RelatedID = item.CommitmentID
 	view.RecordPath = filepath.Join(root, "records", "commitments", item.CommitmentID+".md")
@@ -755,11 +1153,11 @@ func buildCommitmentInspectView(root string, registry protocol.Registry, ref str
 	if view.ProtocolPCID == "" {
 		view.ProtocolPCID = item.ProtocolPCID
 	}
-	return enrichProtocol(registry, view)
+	return enrichProtocol(root, registry, view)
 }
 
 func buildEvidenceInspectView(root string, registry protocol.Registry, ref string, item model.Evidence, artifact model.ArtifactRecord, commitments map[string]model.Commitment) inspectView {
-	view := buildArtifactInspectView(registry, ref, artifact)
+	view := buildArtifactInspectView(root, registry, ref, artifact)
 	view.Kind = "commitment_evidence"
 	view.RelatedID = item.EvidenceID
 	view.RecordPath = "none (evidence stays in data/evidence.jsonl and commitment markdown)"
@@ -779,11 +1177,11 @@ func buildEvidenceInspectView(root string, registry protocol.Registry, ref strin
 	if view.ProtocolPCID == "" {
 		view.ProtocolPCID = item.ProtocolPCID
 	}
-	return enrichProtocol(registry, view)
+	return enrichProtocol(root, registry, view)
 }
 
 func buildAssessmentInspectView(root string, registry protocol.Registry, ref string, item model.Assessment, artifact model.ArtifactRecord, commitments map[string]model.Commitment) inspectView {
-	view := buildArtifactInspectView(registry, ref, artifact)
+	view := buildArtifactInspectView(root, registry, ref, artifact)
 	view.Kind = "commitment_assessment"
 	view.RelatedID = item.AssessmentID
 	view.RecordPath = filepath.Join(root, "records", "assessments", item.AssessmentID+".md")
@@ -802,10 +1200,10 @@ func buildAssessmentInspectView(root string, registry protocol.Registry, ref str
 	if view.ProtocolPCID == "" {
 		view.ProtocolPCID = item.ProtocolPCID
 	}
-	return enrichProtocol(registry, view)
+	return enrichProtocol(root, registry, view)
 }
 
-func buildArtifactInspectView(registry protocol.Registry, ref string, artifact model.ArtifactRecord) inspectView {
+func buildArtifactInspectView(root string, registry protocol.Registry, ref string, artifact model.ArtifactRecord) inspectView {
 	view := inspectView{
 		Reference:    ref,
 		Kind:         artifact.Kind,
@@ -819,16 +1217,17 @@ func buildArtifactInspectView(registry protocol.Registry, ref string, artifact m
 		ProofCID:     artifact.ProofCID,
 		ObservedAt:   artifact.ObservedAt,
 	}
-	return enrichProtocol(registry, view)
+	return enrichProtocol(root, registry, view)
 }
 
-func enrichProtocol(registry protocol.Registry, view inspectView) inspectView {
+func enrichProtocol(root string, registry protocol.Registry, view inspectView) inspectView {
 	if view.ProtocolPCID == "" {
 		return view
 	}
-	if spec, ok := registry.FindByPCID(view.ProtocolPCID); ok {
-		view.ProtocolName = spec.Name
-		view.ProtocolPath = spec.Path
+	location := resolveProtocolLocation(root, registry, view.ProtocolPCID)
+	if location.Matched {
+		view.ProtocolName = location.Name
+		view.ProtocolPath = location.Path
 	}
 	return view
 }
@@ -866,8 +1265,8 @@ func emptyFallback(value string, fallback string) string {
 	return value
 }
 
-func printVerifyResult(registry protocol.Registry, artifact model.ArtifactRecord, decoded grid.DecodedArtifact, ident identity.Identity) {
-	spec, ok := registry.FindByPCID(decoded.ProtocolPCID)
+func printVerifyResult(root string, registry protocol.Registry, artifact model.ArtifactRecord, decoded grid.DecodedArtifact, ident identity.Identity) {
+	location := resolveProtocolLocation(root, registry, decoded.ProtocolPCID)
 	fmt.Printf("Reference: %s\n", emptyFallback(artifact.RelatedID, artifact.ArtifactCID))
 	fmt.Printf("Kind: %s\n", emptyFallback(artifact.Kind, "(unknown)"))
 	fmt.Printf("Artifact CID: %s\n", artifact.ArtifactCID)
@@ -878,12 +1277,12 @@ func printVerifyResult(registry protocol.Registry, artifact model.ArtifactRecord
 	fmt.Printf("Signer Identity Verified: yes\n")
 	fmt.Printf("Signer: %s\n", decoded.Proof.Signer)
 	fmt.Printf("Signer Key ID: %s\n", decoded.Proof.KeyID)
-	fmt.Printf("Local Identity File: %s\n", identityPathForName(decoded.Proof.Signer))
+	fmt.Printf("Local Identity File: %s\n", identitySupportPath(root, decoded.Proof.Signer))
 	fmt.Printf("Protocol pCID: %s\n", decoded.ProtocolPCID)
-	if ok {
+	if location.Matched {
 		fmt.Printf("Local Protocol Match: yes\n")
-		fmt.Printf("Protocol: %s\n", spec.Name)
-		fmt.Printf("Protocol Doc: %s\n", spec.Path)
+		fmt.Printf("Protocol: %s\n", location.Name)
+		fmt.Printf("Protocol Doc: %s\n", location.Path)
 	} else {
 		fmt.Printf("Local Protocol Match: no\n")
 	}
@@ -904,6 +1303,14 @@ func identityPathForName(name string) string {
 		b.WriteString("anon")
 	}
 	return filepath.Join("config", "identities", b.String()+".json")
+}
+
+func identitySupportPath(root string, name string) string {
+	primary := filepath.Join(root, identityPathForName(name))
+	if _, err := os.Stat(primary); err == nil {
+		return primary
+	}
+	return filepath.Join(root, "config", "imported-identities", importedIdentityFilename(name))
 }
 
 func emitCommitmentArtifact(root string, store *ledger.Store, registry protocol.Registry, item model.Commitment, promisee string) (model.Commitment, error) {

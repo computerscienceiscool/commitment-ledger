@@ -83,6 +83,10 @@ func (r Registry) FindByPCID(id string) (Spec, bool) {
 	return Spec{}, false
 }
 
+func SupportPCID(data []byte) string {
+	return cid.Sum(data)
+}
+
 func MarshalPayload(v any) ([]byte, error) {
 	return json.Marshal(v)
 }

@@ -18,6 +18,26 @@ type Identity struct {
 	PrivateKey string `json:"private_key"`
 }
 
+func LoadVerifier(root string, name string) (Identity, ed25519.PublicKey, error) {
+	if ident, pub, _, err := Load(root, name); err == nil {
+		return ident, pub, nil
+	}
+	path := filepath.Join(root, "config", "imported-identities", slug(name)+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Identity{}, nil, fmt.Errorf("read imported identity %q: %w", path, err)
+	}
+	var ident Identity
+	if err := json.Unmarshal(data, &ident); err != nil {
+		return Identity{}, nil, fmt.Errorf("parse imported identity %q: %w", path, err)
+	}
+	pub, err := base64.StdEncoding.DecodeString(ident.PublicKey)
+	if err != nil {
+		return Identity{}, nil, fmt.Errorf("decode public key: %w", err)
+	}
+	return ident, ed25519.PublicKey(pub), nil
+}
+
 func Load(root string, name string) (Identity, ed25519.PublicKey, ed25519.PrivateKey, error) {
 	path := filepath.Join(root, "config", "identities", slug(name)+".json")
 	data, err := os.ReadFile(path)

@@ -51,6 +51,8 @@ commitment-ledger status
 commitment-ledger report --promiser JJ
 commitment-ledger inspect COMMITMENT-...
 commitment-ledger verify COMMITMENT-...
+commitment-ledger export --out /tmp/bundle.json COMMITMENT-...
+commitment-ledger import --in /tmp/bundle.json
 ```
 
 ## Make Targets
@@ -70,6 +72,8 @@ Common targets:
 - `make report REPORT_ARGS='--promiser Alice'`: run a filtered report
 - `make inspect INSPECT_ARGS='COMMITMENT-...'`: inspect a commitment ID, evidence ID, assessment ID, or artifact CID
 - `make verify VERIFY_ARGS='COMMITMENT-...'`: verify a commitment ID, evidence ID, assessment ID, or artifact CID against local CAS bytes and signer material
+- `make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'`: export an artifact bundle with related projection rows and support material
+- `make import IMPORT_ARGS='--in /tmp/bundle.json'`: import an artifact bundle and optionally install bundled support material
 - `make conformance VERSION=v0.1.0 SIGNER=commitment-ledger`: emit a local conformance claim
 
 Demo-oriented targets:
@@ -123,6 +127,8 @@ Observed work targets are always branch-qualified, for example
 - Repo status summaries surface kept and non-kept terminal outcomes separately.
 - `inspect` resolves commitment IDs, evidence IDs, assessment IDs, and artifact CIDs back to their local artifact metadata and frozen protocol docs.
 - `verify` checks local CAS bytes, envelope/payload/proof CIDs, the signature, and matching local signer identity material for a referenced artifact.
+- `export` writes a portable bundle containing the artifact index row, envelope bytes, related projection rows, and available signer/protocol support material.
+- `import` loads that bundle back into local CAS and projections, and can install bundled signer/protocol support material for later `inspect` and `verify` use.
 
 ## Demo Docs
 

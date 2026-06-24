@@ -23,6 +23,8 @@ make status
 make report REPORT_ARGS='--promiser Alice'
 make inspect INSPECT_ARGS='COMMITMENT-...'
 make verify VERIFY_ARGS='COMMITMENT-...'
+make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'
+make import IMPORT_ARGS='--in /tmp/bundle.json'
 ```
 
 For the seeded demo workflow:
@@ -172,6 +174,40 @@ go run ./cmd/commitment-ledger verify bafy...
 It also tells you whether the artifact's `protocol_pcid` matches a local frozen
 protocol doc.
 
+### `export`
+
+```bash
+go run ./cmd/commitment-ledger export --out /tmp/bundle.json COMMITMENT-...
+go run ./cmd/commitment-ledger export --out /tmp/bundle.json EVIDENCE-...
+go run ./cmd/commitment-ledger export --out /tmp/bundle.json ASSESSMENT-...
+go run ./cmd/commitment-ledger export --out /tmp/bundle.json bafy...
+```
+
+`export` writes a bundle containing:
+
+- the artifact index row
+- the raw envelope bytes
+- the related commitment, evidence, or assessment projection when available
+- the related commitment projection for evidence and assessment bundles
+- available protocol and signer support material
+
+### `import`
+
+```bash
+go run ./cmd/commitment-ledger import --in /tmp/bundle.json
+go run ./cmd/commitment-ledger import --in /tmp/bundle.json --install-support=false
+```
+
+`import` restores the bundle into local CAS and append-only projections.
+
+By default it also installs bundled support material into:
+
+- `data/imported-protocols/`
+- `config/imported-identities/`
+
+Use `--install-support=false` when you want to import the artifact but
+deliberately keep signer/protocol support separate.
+
 ## Local State Layout
 
 ### `data/`
@@ -189,6 +225,11 @@ Append-only machine-readable projections:
 
 Raw content-addressed bytes for emitted artifacts and frozen protocol docs.
 
+### `data/imported-protocols/`
+
+Imported protocol docs and metadata used when a bundle carries a protocol doc
+that is not already part of the repo's built-in frozen set.
+
 ### `records/`
 
 Human-readable Markdown projections:
@@ -197,6 +238,11 @@ Human-readable Markdown projections:
 - `records/assessments/`
 
 Evidence does not currently get its own standalone Markdown record.
+
+### `config/imported-identities/`
+
+Imported public signer material used by `verify` when an artifact signer is not
+present in the primary local identity store.
 
 ### `docs/protocols/`
 
@@ -292,6 +338,7 @@ What to do:
 
 - confirm you are in the repo that originally emitted the artifact
 - check `config/identities/`
+- check `config/imported-identities/` if the artifact came from `import`
 - use `inspect` to confirm the signer name carried in the proof
 
 ### `verify` says signer identity mismatch
@@ -306,3 +353,27 @@ What to do:
 - inspect the artifact and signer identity carefully
 - treat this as a real trust/integrity problem, not a display issue
 - see `docs/trust-and-verification.md` for the trust model limits
+
+### `verify` says local protocol match is `no`
+
+Cause:
+
+- the artifact references a protocol `pCID` the repo does not know locally
+- or an imported bundle was loaded without its protocol support
+
+What to do:
+
+- inspect the artifact
+- check `data/imported-protocols/`
+- re-import the bundle with support material if appropriate
+
+### `import` fails with a protocol support mismatch
+
+Cause:
+
+- the bundled protocol bytes do not hash to the bundled `protocol_pcid`
+
+What to do:
+
+- treat the bundle as malformed or tampered with
+- do not trust that support material without an explanation

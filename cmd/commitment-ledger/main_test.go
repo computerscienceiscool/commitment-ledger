@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"os"
@@ -11,6 +12,9 @@ import (
 	"time"
 
 	"commitment-ledger/internal/config"
+	"commitment-ledger/internal/exchange"
+	"commitment-ledger/internal/grid"
+	"commitment-ledger/internal/identity"
 	"commitment-ledger/internal/ledger"
 	"commitment-ledger/internal/model"
 	"commitment-ledger/internal/protocol"
@@ -490,6 +494,197 @@ func TestRunVerifyRejectsUnknownReference(t *testing.T) {
 	}
 }
 
+func TestRunExportImportRoundTripWithSupport(t *testing.T) {
+	exportRoot := t.TempDir()
+	copyProtocolDocs(t, exportRoot)
+	exportStore := ledger.NewStore(exportRoot)
+	exportRegistry, err := protocol.Load(exportRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load export: %v", err)
+	}
+
+	repoPath := filepath.Join(exportRoot, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(exportRoot, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+
+	now := time.Date(2026, 6, 24, 16, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(exportRoot, exportStore, exportRegistry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan initial: %v", err)
+	}
+	if err := runCommit(exportRoot, exportStore, exportRegistry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+	commitment := latestCommitment(t, exportStore)
+	writeFixtureRepo(t, repoPath, true)
+	gitCommitAll(t, repoPath, "Complete subtask 1")
+	if err := runScan(exportRoot, exportStore, exportRegistry, now.Add(2*time.Hour), []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan second: %v", err)
+	}
+	evidenceItem := latestEvidenceByType(t, exportStore, model.EvidenceTypeTodoChecked)
+	if err := runAssess(exportRoot, exportStore, exportRegistry, now.Add(3*time.Hour), []string{
+		"--commitment", commitment.CommitmentID,
+		"--assessor", "Alice",
+		"--status", model.StatusKept,
+		"--basis", evidenceItem.EvidenceID,
+		"--notes", "Completed before the due date.",
+	}); err != nil {
+		t.Fatalf("runAssess: %v", err)
+	}
+	assessment := latestAssessment(t, exportStore)
+
+	evidenceBundlePath := filepath.Join(exportRoot, "exports", "evidence.json")
+	if err := runExport(exportRoot, exportStore, exportRegistry, now.Add(4*time.Hour), []string{"--out", evidenceBundlePath, evidenceItem.EvidenceID}); err != nil {
+		t.Fatalf("runExport evidence: %v", err)
+	}
+	assessmentBundlePath := filepath.Join(exportRoot, "exports", "assessment.json")
+	if err := runExport(exportRoot, exportStore, exportRegistry, now.Add(4*time.Hour), []string{"--out", assessmentBundlePath, assessment.AssessmentID}); err != nil {
+		t.Fatalf("runExport assessment: %v", err)
+	}
+
+	importRoot := t.TempDir()
+	copyProtocolDocs(t, importRoot)
+	importStore := ledger.NewStore(importRoot)
+	importRegistry, err := protocol.Load(importRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load import: %v", err)
+	}
+	if err := runImport(importRoot, importStore, importRegistry, []string{"--in", evidenceBundlePath}); err != nil {
+		t.Fatalf("runImport evidence: %v", err)
+	}
+	if err := runImport(importRoot, importStore, importRegistry, []string{"--in", assessmentBundlePath}); err != nil {
+		t.Fatalf("runImport assessment: %v", err)
+	}
+
+	verifyEvidence := captureStdout(t, func() error {
+		return runVerify(importRoot, importStore, importRegistry, []string{evidenceItem.EvidenceID})
+	})
+	if !strings.Contains(verifyEvidence, "Kind: commitment_evidence") || !strings.Contains(verifyEvidence, "Signature Verified: yes") {
+		t.Fatalf("unexpected imported evidence verify output:\n%s", verifyEvidence)
+	}
+
+	verifyAssessment := captureStdout(t, func() error {
+		return runVerify(importRoot, importStore, importRegistry, []string{assessment.AssessmentID})
+	})
+	if !strings.Contains(verifyAssessment, "Kind: commitment_assessment") || !strings.Contains(verifyAssessment, "Protocol: "+protocol.CommitmentAssessment) {
+		t.Fatalf("unexpected imported assessment verify output:\n%s", verifyAssessment)
+	}
+
+	inspectAssessment := captureStdout(t, func() error {
+		return runInspect(importRoot, importStore, importRegistry, []string{assessment.AssessmentID})
+	})
+	if !strings.Contains(inspectAssessment, "Current Commitment Status: kept") {
+		t.Fatalf("unexpected imported assessment inspect output:\n%s", inspectAssessment)
+	}
+}
+
+func TestRunImportVerifyFailsWithoutSignerSupport(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	bundle.Signer = nil
+	bundlePath := filepath.Join(root, "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+
+	importRoot := t.TempDir()
+	copyProtocolDocs(t, importRoot)
+	importStore := ledger.NewStore(importRoot)
+	importRegistry, err := protocol.Load(importRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load import: %v", err)
+	}
+	if err := runImport(importRoot, importStore, importRegistry, []string{"--in", bundlePath, "--install-support=false"}); err != nil {
+		t.Fatalf("runImport: %v", err)
+	}
+
+	err = runVerify(importRoot, importStore, importRegistry, []string{bundle.Artifact.ArtifactCID})
+	if err == nil || !strings.Contains(err.Error(), "load signer identity") {
+		t.Fatalf("runVerify error = %v, want missing signer identity", err)
+	}
+}
+
+func TestRunImportVerifyUsesImportedProtocolSupportAndFailsOnMismatchedSigner(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	bundlePath := filepath.Join(root, "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+
+	importRoot := t.TempDir()
+	copyProtocolDocs(t, importRoot)
+	importStore := ledger.NewStore(importRoot)
+	importRegistry, err := protocol.Load(importRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load import: %v", err)
+	}
+	if err := runImport(importRoot, importStore, importRegistry, []string{"--in", bundlePath}); err != nil {
+		t.Fatalf("runImport: %v", err)
+	}
+	verifyOut := captureStdout(t, func() error {
+		return runVerify(importRoot, importStore, importRegistry, []string{bundle.Artifact.ArtifactCID})
+	})
+	if !strings.Contains(verifyOut, "Local Protocol Match: yes") || !strings.Contains(verifyOut, "Protocol: external-protocol-v1") {
+		t.Fatalf("expected imported protocol support in verify output:\n%s", verifyOut)
+	}
+
+	bundle.Signer.PublicKey = base64.StdEncoding.EncodeToString([]byte("not-a-real-public-key"))
+	badBundlePath := filepath.Join(root, "bundle-bad-signer.json")
+	writeBundle(t, badBundlePath, bundle)
+
+	badImportRoot := t.TempDir()
+	copyProtocolDocs(t, badImportRoot)
+	badImportStore := ledger.NewStore(badImportRoot)
+	badImportRegistry, err := protocol.Load(badImportRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load bad import: %v", err)
+	}
+	if err := runImport(badImportRoot, badImportStore, badImportRegistry, []string{"--in", badBundlePath}); err != nil {
+		t.Fatalf("runImport bad signer: %v", err)
+	}
+	err = runVerify(badImportRoot, badImportStore, badImportRegistry, []string{bundle.Artifact.ArtifactCID})
+	if err == nil || !strings.Contains(err.Error(), "local identity public key mismatch") {
+		t.Fatalf("runVerify error = %v, want signer mismatch", err)
+	}
+}
+
+func TestRunImportRejectsMismatchedProtocolSupport(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	bundle.Protocol.DocumentBytes = base64.StdEncoding.EncodeToString([]byte("tampered protocol doc"))
+	bundlePath := filepath.Join(root, "bundle-bad-protocol.json")
+	writeBundle(t, bundlePath, bundle)
+
+	importRoot := t.TempDir()
+	copyProtocolDocs(t, importRoot)
+	importStore := ledger.NewStore(importRoot)
+	importRegistry, err := protocol.Load(importRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load import: %v", err)
+	}
+	err = runImport(importRoot, importStore, importRegistry, []string{"--in", bundlePath})
+	if err == nil || !strings.Contains(err.Error(), "protocol support pCID mismatch") {
+		t.Fatalf("runImport error = %v, want protocol support pCID mismatch", err)
+	}
+}
+
 func TestRunAssessRejectsKeptForIncompleteParentTarget(t *testing.T) {
 	root := t.TempDir()
 	copyProtocolDocs(t, root)
@@ -777,6 +972,107 @@ func removeFixtureDetailFile(repoPath string) error {
 		return err
 	}
 	return nil
+}
+
+func latestCommitment(t *testing.T, store *ledger.Store) model.Commitment {
+	t.Helper()
+	items, err := store.LoadLatestCommitments()
+	if err != nil {
+		t.Fatalf("LoadLatestCommitments: %v", err)
+	}
+	var current model.Commitment
+	for _, item := range items {
+		current = item
+	}
+	if current.CommitmentID == "" {
+		t.Fatal("expected latest commitment")
+	}
+	return current
+}
+
+func latestEvidenceByType(t *testing.T, store *ledger.Store, evidenceType string) model.Evidence {
+	t.Helper()
+	items, err := store.LoadEvidence()
+	if err != nil {
+		t.Fatalf("LoadEvidence: %v", err)
+	}
+	var current model.Evidence
+	for _, item := range items {
+		if item.EvidenceType == evidenceType {
+			current = item
+		}
+	}
+	if current.EvidenceID == "" {
+		t.Fatalf("expected evidence of type %s", evidenceType)
+	}
+	return current
+}
+
+func latestAssessment(t *testing.T, store *ledger.Store) model.Assessment {
+	t.Helper()
+	items, err := store.LoadAssessments()
+	if err != nil {
+		t.Fatalf("LoadAssessments: %v", err)
+	}
+	if len(items) == 0 {
+		t.Fatal("expected latest assessment")
+	}
+	return items[len(items)-1]
+}
+
+func syntheticBundle(t *testing.T, root string, protocolName string, protocolDoc []byte, signerName string) exchange.Bundle {
+	t.Helper()
+	protocolPCID := protocol.SupportPCID(protocolDoc)
+	ident, pub, priv, err := identity.LoadOrCreate(root, signerName)
+	if err != nil {
+		t.Fatalf("LoadOrCreate identity: %v", err)
+	}
+	payload := []byte(`{"kind":"synthetic_exchange_test"}`)
+	artifact, err := grid.Build(protocolPCID, payload, ident.Name, ident.KeyID, pub, priv)
+	if err != nil {
+		t.Fatalf("grid.Build: %v", err)
+	}
+	return exchange.Bundle{
+		Version:    exchange.BundleVersion,
+		ExportedAt: time.Date(2026, 6, 24, 18, 0, 0, 0, time.FixedZone("PDT", -7*3600)).Format(time.RFC3339),
+		Artifact: model.ArtifactRecord{
+			ArtifactCID:  artifact.EnvelopeCID,
+			ProtocolPCID: artifact.ProtocolPCID,
+			Kind:         "synthetic_test",
+			Signer:       ident.Name,
+			SignerKeyID:  ident.KeyID,
+			PayloadCID:   artifact.PayloadCID,
+			ProofCID:     artifact.ProofCID,
+			ObservedAt:   time.Date(2026, 6, 24, 18, 0, 0, 0, time.FixedZone("PDT", -7*3600)).Format(time.RFC3339),
+			RelatedID:    artifact.EnvelopeCID,
+		},
+		Envelope: base64.StdEncoding.EncodeToString(artifact.Envelope),
+		Protocol: &exchange.ProtocolSupport{
+			Name:          protocolName,
+			ProtocolPCID:  protocolPCID,
+			DocCID:        protocolPCID,
+			DocumentBytes: base64.StdEncoding.EncodeToString(protocolDoc),
+		},
+		Signer: &exchange.SignerSupport{
+			Name:      ident.Name,
+			KeyID:     ident.KeyID,
+			PublicKey: ident.PublicKey,
+		},
+	}
+}
+
+func writeBundle(t *testing.T, path string, bundle exchange.Bundle) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir bundle dir: %v", err)
+	}
+	data, err := json.MarshalIndent(bundle, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal bundle: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write bundle: %v", err)
+	}
 }
 
 func runGit(t *testing.T, repoPath string, args ...string) {

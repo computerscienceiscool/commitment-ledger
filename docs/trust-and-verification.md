@@ -45,11 +45,14 @@ Today, Commitment Ledger is local-first:
 
 - artifacts live in local CAS
 - identity material lives under `config/identities/`
+- imported public signer material can live under `config/imported-identities/`
 - protocol docs live under `docs/protocols/`
+- imported protocol docs can live under `data/imported-protocols/`
 - conformance claims are local statements by this implementation
 
 That means verification is strongest when you are checking artifacts emitted by
-this same local repo state and signer store.
+this same local repo state and signer store. Imported bundles can extend what
+the repo can verify locally, but they do not by themselves create shared trust.
 
 ## Practical Reading
 

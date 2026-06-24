@@ -2,6 +2,7 @@
 
 This list is sorted by priority. TODO handles are stable proquint IDs.
 
+- [x] TODO-temuk - Add bundle export/import artifact exchange (`TODO/TODO-temuk-add-bundle-export-import-artifact-exchange.md`)
 - [x] TODO-vupat - Add artifact verification command and trust docs (`TODO/TODO-vupat-add-artifact-verification-command-and-trust-docs.md`)
 - [x] TODO-risuk - Add operator guide and inspect lifecycle coverage (`TODO/TODO-risuk-add-operator-guide-and-inspect-lifecycle-coverage.md`)
 - [x] TODO-lisuv - Add inspect command for artifact and record lookup (`TODO/TODO-lisuv-add-inspect-command-for-artifact-and-record-lookup.md`)

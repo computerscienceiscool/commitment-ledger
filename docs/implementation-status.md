@@ -23,11 +23,15 @@ That means two different kinds of incompleteness need to stay separate:
 
 ### Local-missing
 
-- No peer-to-peer transport or artifact exchange yet.
-- No import path for remote evidence or remote conformance claims yet.
+- No peer-to-peer transport yet.
+- No shared remote import protocol or peer sync path yet.
 - No richer local trust-accounting view yet.
 - No explicit migration story from these local protocol docs to any future
   upstream frozen specs yet.
+
+Current local exchange support is bundle-based only: operators can `export` and
+`import` artifacts plus support material, but there is still no shared network
+transport or peer protocol layered over that.
 
 ## Conformance Claim Path
 

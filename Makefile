@@ -19,9 +19,11 @@ EVIDENCE_ARGS ?=
 ASSESS_ARGS ?=
 INSPECT_ARGS ?=
 VERIFY_ARGS ?=
+EXPORT_ARGS ?=
+IMPORT_ARGS ?=
 TODO_REPOS := alice-demo bob-demo dave-demo mallory-demo
 
-.PHONY: help fmt test build check clean cli scan status report inspect verify conformance expire commit evidence assess \
+.PHONY: help fmt test build check clean cli scan status report inspect verify export import conformance expire commit evidence assess \
 	demo-init demo-seed demo-config demo-setup demo-scan demo-status demo-report
 
 help:
@@ -41,6 +43,8 @@ help:
 	@echo "  make report REPORT_ARGS='--promiser Alice'"
 	@echo "  make inspect INSPECT_ARGS='COMMITMENT-...'"
 	@echo "  make verify VERIFY_ARGS='COMMITMENT-...'"
+	@echo "  make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'"
+	@echo "  make import IMPORT_ARGS='--in /tmp/bundle.json'"
 	@echo "  make conformance VERSION=$(VERSION) SIGNER=$(SIGNER)"
 	@echo "  make expire"
 	@echo "  make commit COMMIT_ARGS='--promiser Alice --repo alice-demo --branch main --target alice-demo/main/TODO-ravud/1 --due 2026-07-01 --promise ...'"
@@ -86,6 +90,12 @@ inspect:
 
 verify:
 	@$(RUN) verify $(VERIFY_ARGS)
+
+export:
+	@$(RUN) export $(EXPORT_ARGS)
+
+import:
+	@$(RUN) import $(IMPORT_ARGS)
 
 conformance:
 	@$(RUN) conformance --signer $(SIGNER) --version $(VERSION)
