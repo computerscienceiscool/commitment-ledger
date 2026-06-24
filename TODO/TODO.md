@@ -2,6 +2,18 @@
 
 This list is sorted by priority. TODO handles are stable proquint IDs.
 
+Retrospective note:
+
+- This repo did not use `TODO/TODO.md` correctly for all later work.
+- The index was maintained for earlier milestone-style TODO files, but many
+  later completed features were implemented, committed, and pushed without first
+  being added here as their own TODO entries.
+- The checked items below are therefore historically incomplete as a full work
+  log.
+- The retrospective checklist at the end of this file records the major later
+  work that was completed but not tracked here in the intended way.
+
+- [x] TODO-togiv - Restore validation and conflict handling polish (`TODO/TODO-togiv-restore-validation-and-conflict-handling-polish.md`)
 - [x] TODO-temuk - Add bundle export/import artifact exchange (`TODO/TODO-temuk-add-bundle-export-import-artifact-exchange.md`)
 - [x] TODO-vupat - Add artifact verification command and trust docs (`TODO/TODO-vupat-add-artifact-verification-command-and-trust-docs.md`)
 - [x] TODO-risuk - Add operator guide and inspect lifecycle coverage (`TODO/TODO-risuk-add-operator-guide-and-inspect-lifecycle-coverage.md`)
@@ -18,3 +30,26 @@ This list is sorted by priority. TODO handles are stable proquint IDs.
 - [x] TODO-tuvan - Store append-only ledger records in JSONL and Markdown (`TODO/TODO-tuvan-ledger-record-storage.md`)
 - [x] TODO-sorik - Implement commitment lifecycle commands and reports (`TODO/TODO-sorik-commitment-lifecycle-and-reports.md`)
 - [x] TODO-vubat - Add deterministic tests for parsing, storage, and status transitions (`TODO/TODO-vubat-core-test-coverage.md`)
+
+## Retrospective Completed Work Not Properly Tracked Here
+
+- [x] Retrospective - Clarify conformance and protocol migration story
+- [x] Retrospective - Add make workflows and enforce kept completion
+- [x] Retrospective - Fix stale work state and promiser reporting
+- [x] Retrospective - Add inspect command for artifact lookup
+- [x] Retrospective - Add operator guide and inspect coverage
+- [x] Retrospective - Add artifact verification command
+- [x] Retrospective - Add bundle export and import exchange
+- [x] Retrospective - Publish conformance claims in `CHANGELOG.md`
+- [x] Retrospective - Automate conformance publication and local peer exchange
+- [x] Retrospective - Add local trust policy and exchange summaries
+- [x] Retrospective - Add doctor checks and import conflict hardening
+- [x] Retrospective - Add JSON automation, identity rotation, and receive receipts
+- [x] Retrospective - Add JSON inspect and verify output
+- [x] Retrospective - Add status JSON and doctor repair hints
+- [x] Retrospective - Add provenance browsing and support repair
+- [x] Retrospective - Add identity history and signer lineage
+- [x] Retrospective - Add provenance lineage auditing
+- [x] Retrospective - Add identity-lineage repair and exchange summaries
+- [x] Retrospective - Add repair JSON and identity backup export
+- [x] Retrospective - Add identity restore and strict recovery checks
