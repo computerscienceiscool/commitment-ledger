@@ -31,7 +31,9 @@ make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'
 make import IMPORT_ARGS='--in /tmp/bundle.json'
 make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'
 make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'
-make doctor
+make doctor DOCTOR_ARGS='--json'
+make repair REPAIR_ARGS='--records --protocol-cas --import-artifacts'
+make identity IDENTITY_ARGS='list --json'
 ```
 
 For the seeded demo workflow:
@@ -140,6 +142,7 @@ go run ./cmd/commitment-ledger report --promiser Alice
 go run ./cmd/commitment-ledger report --repo alice-demo --branch main
 go run ./cmd/commitment-ledger report --work alice-demo/main/TODO-ravud
 go run ./cmd/commitment-ledger report --imports
+go run ./cmd/commitment-ledger report --imports --json
 ```
 
 Use `report` when you want filtered summaries by promiser, repo, or work
@@ -148,12 +151,15 @@ target.
 Use `report --imports` when you want imported-artifact summaries grouped by
 source path and annotated with the current trust-policy result.
 
+Use `--json` when you need machine-readable summaries for automation.
+
 ### `inspect`
 
 ```bash
 go run ./cmd/commitment-ledger inspect COMMITMENT-...
 go run ./cmd/commitment-ledger inspect EVIDENCE-...
 go run ./cmd/commitment-ledger inspect ASSESSMENT-...
+go run ./cmd/commitment-ledger inspect RECEIPT-...
 go run ./cmd/commitment-ledger inspect bafy...
 ```
 
@@ -182,6 +188,7 @@ It prints:
 go run ./cmd/commitment-ledger verify COMMITMENT-...
 go run ./cmd/commitment-ledger verify EVIDENCE-...
 go run ./cmd/commitment-ledger verify ASSESSMENT-...
+go run ./cmd/commitment-ledger verify RECEIPT-...
 go run ./cmd/commitment-ledger verify bafy...
 ```
 
@@ -281,16 +288,27 @@ go run ./cmd/commitment-ledger receive --inbox /tmp/peer-inbox --archive /tmp/pe
 `receive` scans a local inbox directory for bundle files, imports them, and can
 optionally archive the processed files after successful import.
 
+By default, each successful `receive` also emits a signed local
+`exchange_receipt` artifact acknowledging the imported bundle. Use
+`--receipt-signer ''` to disable that behavior, or `--receipt-signer NAME` to
+choose a different local receipt signer.
+
 `import` and `receive` now fail fast on conflicts:
 
 - same artifact CID with different indexed metadata
 - same commitment/evidence/assessment ID with different projected content
 - same imported signer or protocol support path with different bytes
 
+Bundle files are also parsed strictly:
+
+- unknown JSON fields are rejected
+- missing required artifact fields are rejected before any local state changes
+
 ### `doctor`
 
 ```bash
 go run ./cmd/commitment-ledger doctor
+go run ./cmd/commitment-ledger doctor --json
 ```
 
 `doctor` checks:
@@ -302,6 +320,39 @@ go run ./cmd/commitment-ledger doctor
 
 Treat a nonzero `doctor` result as a real local integrity problem until you
 understand it.
+
+### `repair`
+
+```bash
+go run ./cmd/commitment-ledger repair
+go run ./cmd/commitment-ledger repair --records
+go run ./cmd/commitment-ledger repair --protocol-cas
+go run ./cmd/commitment-ledger repair --import-artifacts
+```
+
+`repair` is intentionally conservative. Today it can:
+
+- rebuild commitment and assessment Markdown projection files from JSONL state
+- restore built-in frozen protocol docs into local CAS
+- restore missing imported artifact envelopes from previously recorded bundle source paths
+
+It still does not resolve projection conflicts or synthesize bundle sources that
+no longer exist locally.
+
+### `identity`
+
+```bash
+go run ./cmd/commitment-ledger identity list --json
+go run ./cmd/commitment-ledger identity show Alice
+go run ./cmd/commitment-ledger identity rotate --name Alice
+```
+
+`identity` is the basic local signer lifecycle helper.
+
+- `list` shows primary and imported identities
+- `show` prints the current key ID, path, and public key for one name
+- `rotate` archives the old private key file under `config/identities/archive/`
+  and writes a new keypair to the primary identity path
 
 ## Local State Layout
 
@@ -374,8 +425,9 @@ Recommended recovery flow:
 
 1. Restore those paths together into a fresh checkout.
 2. Run `make doctor`.
-3. Run `make status` and `make status STATUS_ARGS='--exchange'`.
-4. Use `inspect` or `verify` on a few representative artifacts before resuming normal operation.
+3. Run `make repair` if records, built-in protocol CAS objects, or imported artifact envelopes are missing.
+4. Run `make status` and `make status STATUS_ARGS='--exchange'`.
+5. Use `inspect` or `verify` on a few representative artifacts before resuming normal operation.
 
 ## Troubleshooting
 

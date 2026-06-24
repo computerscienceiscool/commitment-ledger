@@ -51,6 +51,13 @@ func CurrentEntries(registry protocol.Registry, version string) []Entry {
 		},
 		{
 			Claim:          "implements",
+			Spec:           registry.MustPCID(protocol.ExchangeReceipt),
+			Scope:          "full",
+			BreakingChange: "false",
+			Notes:          fmt.Sprintf("Current commitment-ledger %s emission for local frozen `%s` during local bundle receive flows.", version, protocol.ExchangeReceipt),
+		},
+		{
+			Claim:          "implements",
 			Spec:           registry.MustPCID(protocol.ImplementationConformance),
 			Scope:          "full",
 			BreakingChange: "false",

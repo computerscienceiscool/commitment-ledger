@@ -42,6 +42,12 @@ Current local integrity checking is operator-side only: `doctor` can validate
 artifact/CAS/support consistency inside one checkout, but there is still no
 shared remote repair or quorum mechanism.
 
+Current local repair support is intentionally narrow: `repair` can rebuild
+Markdown projections, restore built-in protocol docs to CAS, and restore
+missing imported artifact envelopes when the original bundle source paths are
+still available locally, but it still does not resolve conflicting imported
+state automatically.
+
 ## Conformance Claim Path
 
 This repo now publishes conformance in two aligned ways:

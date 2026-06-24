@@ -25,9 +25,11 @@ IMPORT_ARGS ?=
 SEND_ARGS ?=
 RECEIVE_ARGS ?=
 DOCTOR_ARGS ?=
+REPAIR_ARGS ?=
+IDENTITY_ARGS ?=
 TODO_REPOS := alice-demo bob-demo dave-demo mallory-demo
 
-.PHONY: help fmt test build check clean cli scan status report inspect verify export import send receive doctor conformance conformance-update expire commit evidence assess \
+.PHONY: help fmt test build check clean cli scan status report inspect verify export import send receive doctor repair identity conformance conformance-update expire commit evidence assess \
 	demo-init demo-seed demo-config demo-setup demo-scan demo-status demo-report
 
 help:
@@ -52,7 +54,9 @@ help:
 	@echo "  make import IMPORT_ARGS='--in /tmp/bundle.json'"
 	@echo "  make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'"
 	@echo "  make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'"
-	@echo "  make doctor DOCTOR_ARGS=''"
+	@echo "  make doctor DOCTOR_ARGS='--json'"
+	@echo "  make repair REPAIR_ARGS='--records --protocol-cas --import-artifacts'"
+	@echo "  make identity IDENTITY_ARGS='list --json'"
 	@echo "  make conformance VERSION=$(VERSION) SIGNER=$(SIGNER)"
 	@echo "  make conformance-update VERSION=$(VERSION) SIGNER=$(SIGNER)"
 	@echo "  make expire"
@@ -114,6 +118,12 @@ receive:
 
 doctor:
 	@$(RUN) doctor $(DOCTOR_ARGS)
+
+repair:
+	@$(RUN) repair $(REPAIR_ARGS)
+
+identity:
+	@$(RUN) identity $(IDENTITY_ARGS)
 
 conformance:
 	@$(RUN) conformance --signer $(SIGNER) --version $(VERSION)

@@ -38,6 +38,19 @@ type CommitmentAssessmentPayload struct {
 	Notes         string   `json:"notes,omitempty"`
 }
 
+type ExchangeReceiptPayload struct {
+	Kind                    string `json:"kind"`
+	ReceiptID               string `json:"receipt_id"`
+	ReceivedArtifactCID     string `json:"received_artifact_cid"`
+	RelatedID               string `json:"related_id,omitempty"`
+	SourcePath              string `json:"source_path"`
+	Receiver                string `json:"receiver"`
+	ReceivedAt              string `json:"received_at"`
+	SupportInstalled        bool   `json:"support_installed"`
+	InstalledProtocolPCID   string `json:"installed_protocol_pcid,omitempty"`
+	InstalledSignerIdentity string `json:"installed_signer_identity,omitempty"`
+}
+
 type ImplementationConformancePayload struct {
 	Kind                    string   `json:"kind"`
 	Implementation          string   `json:"implementation"`

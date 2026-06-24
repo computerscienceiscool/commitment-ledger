@@ -1,6 +1,7 @@
 package trust
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -50,12 +51,45 @@ func Load(root string) (Policy, error) {
 	if err != nil {
 		return Policy{}, fmt.Errorf("read trust policy %q: %w", path, err)
 	}
-	if err := json.Unmarshal(data, &policy); err != nil {
+	if err := parsePolicy(data, &policy); err != nil {
 		return Policy{}, fmt.Errorf("parse trust policy %q: %w", path, err)
 	}
 	policy.Path = path
 	policy.Found = true
 	return policy, nil
+}
+
+func parsePolicy(data []byte, policy *Policy) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(policy); err != nil {
+		return err
+	}
+	return validatePolicy(*policy)
+}
+
+func validatePolicy(policy Policy) error {
+	for _, signer := range policy.TrustedSigners {
+		if strings.TrimSpace(signer) == "" {
+			return fmt.Errorf("trusted_signers must not contain empty values")
+		}
+	}
+	for _, pcid := range policy.TrustedProtocolPCIDs {
+		if strings.TrimSpace(pcid) == "" {
+			return fmt.Errorf("trusted_protocol_pcids must not contain empty values")
+		}
+	}
+	for _, mode := range policy.TrustedImportModes {
+		if mode != "import" && mode != "receive" {
+			return fmt.Errorf("trusted_import_modes contains unsupported mode %q", mode)
+		}
+	}
+	for _, prefix := range policy.TrustedImportPrefixes {
+		if strings.TrimSpace(prefix) == "" {
+			return fmt.Errorf("trusted_import_path_prefixes must not contain empty values")
+		}
+	}
+	return nil
 }
 
 func Evaluate(policy Policy, signer string, signerBuiltIn bool, protocolPCID string, protocolBuiltIn bool, latestImport *model.ImportRecord) Evaluation {

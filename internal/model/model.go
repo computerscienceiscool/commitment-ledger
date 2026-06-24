@@ -122,6 +122,7 @@ type ImportRecord struct {
 	SupportInstalled        bool   `json:"support_installed"`
 	InstalledProtocolPCID   string `json:"installed_protocol_pcid,omitempty"`
 	InstalledSignerIdentity string `json:"installed_signer_identity,omitempty"`
+	ReceiptArtifactCID      string `json:"receipt_artifact_cid,omitempty"`
 }
 
 type Snapshot struct {

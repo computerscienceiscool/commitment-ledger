@@ -9,40 +9,40 @@ import (
 )
 
 type RepoSummary struct {
-	Repo              string
-	Branch            string
-	OpenTODOs         int
-	OpenSubtasks      int
-	ActiveCommitments int
-	Expired           int
-	Kept              int
-	PartiallyKept     int
-	Broken            int
-	Refused           int
-	Delegated         int
-	Superseded        int
-	Extended          int
+	Repo              string `json:"repo"`
+	Branch            string `json:"branch"`
+	OpenTODOs         int    `json:"open_todos"`
+	OpenSubtasks      int    `json:"open_subtasks"`
+	ActiveCommitments int    `json:"active_commitments"`
+	Expired           int    `json:"expired"`
+	Kept              int    `json:"kept"`
+	PartiallyKept     int    `json:"partially_kept"`
+	Broken            int    `json:"broken"`
+	Refused           int    `json:"refused"`
+	Delegated         int    `json:"delegated"`
+	Superseded        int    `json:"superseded"`
+	Extended          int    `json:"extended"`
 }
 
 type PersonSummary struct {
-	Promiser          string
-	OpenCommitments   int
-	Kept              int
-	PartiallyKept     int
-	ExpiredUnassessed int
-	Broken            int
-	Refused           int
-	Delegated         int
-	Superseded        int
-	Extended          int
+	Promiser          string `json:"promiser"`
+	OpenCommitments   int    `json:"open_commitments"`
+	Kept              int    `json:"kept"`
+	PartiallyKept     int    `json:"partially_kept"`
+	ExpiredUnassessed int    `json:"expired_unassessed"`
+	Broken            int    `json:"broken"`
+	Refused           int    `json:"refused"`
+	Delegated         int    `json:"delegated"`
+	Superseded        int    `json:"superseded"`
+	Extended          int    `json:"extended"`
 }
 
 type WorkSummary struct {
-	Target            string
-	Status            string
-	Subtasks          int
-	CompletedSubtasks int
-	Commitments       []model.Commitment
+	Target            string             `json:"target"`
+	Status            string             `json:"status"`
+	Subtasks          int                `json:"subtasks"`
+	CompletedSubtasks int                `json:"completed_subtasks"`
+	Commitments       []model.Commitment `json:"commitments"`
 }
 
 func RepoSummaries(workItems map[string]model.WorkItem, commitments map[string]model.Commitment) []RepoSummary {

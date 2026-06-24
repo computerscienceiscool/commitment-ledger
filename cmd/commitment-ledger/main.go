@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
@@ -78,6 +80,10 @@ func main() {
 		err = runReceive(root, store, registry, now, os.Args[2:])
 	case "doctor":
 		err = runDoctor(root, store, registry, os.Args[2:])
+	case "repair":
+		err = runRepair(root, store, registry, os.Args[2:])
+	case "identity":
+		err = runIdentity(root, os.Args[2:])
 	default:
 		usage()
 		err = fmt.Errorf("unknown command %q", os.Args[1])
@@ -89,7 +95,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report|inspect|verify|export|import|send|receive|doctor> [flags]")
+	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report|inspect|verify|export|import|send|receive|doctor|repair|identity> [flags]")
 }
 
 func runScan(root string, store *ledger.Store, registry protocol.Registry, now time.Time, args []string) error {
@@ -491,6 +497,7 @@ func runReport(root string, store *ledger.Store, args []string) error {
 	promiser := fs.String("promiser", "", "promiser")
 	workTarget := fs.String("work", "", "work target")
 	importsOnly := fs.Bool("imports", false, "show import and exchange summary")
+	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -502,6 +509,9 @@ func runReport(root string, store *ledger.Store, args []string) error {
 		policy, err := trust.Load(root)
 		if err != nil {
 			return err
+		}
+		if *jsonOut {
+			return printJSON(summarizeImports(policy, imports))
 		}
 		printImportReport(policy, imports)
 		return nil
@@ -520,6 +530,9 @@ func runReport(root string, store *ledger.Store, args []string) error {
 		summary, err := report.FindWorkSummary(*workTarget, workItems, commitments)
 		if err != nil {
 			return err
+		}
+		if *jsonOut {
+			return printJSON(summary)
 		}
 		fmt.Printf("Work: %s\n", summary.Target)
 		fmt.Printf("Status: %s\n", summary.Status)
@@ -541,6 +554,9 @@ func runReport(root string, store *ledger.Store, args []string) error {
 		for _, item := range persons {
 			if item.Promiser != *promiser {
 				continue
+			}
+			if *jsonOut {
+				return printJSON(item)
 			}
 			fmt.Printf("Promiser: %s\n", item.Promiser)
 			fmt.Printf("Open commitments: %d\n", item.OpenCommitments)
@@ -566,6 +582,9 @@ func runReport(root string, store *ledger.Store, args []string) error {
 			}
 		}
 		summaries = filtered
+	}
+	if *jsonOut {
+		return printJSON(summaries)
 	}
 	sort.Slice(summaries, func(i, j int) bool { return summaries[i].Repo < summaries[j].Repo })
 	for _, item := range summaries {
@@ -781,7 +800,8 @@ func runImportAt(root string, store *ledger.Store, registry protocol.Registry, n
 	if fs.NArg() != 0 {
 		return fmt.Errorf("import does not accept positional references")
 	}
-	return importBundlePath(root, store, registry, now, *inPath, *installSupport, "import", true)
+	_, err := importBundlePath(root, store, registry, now, *inPath, *installSupport, "import", true)
+	return err
 }
 
 func runSend(root string, store *ledger.Store, registry protocol.Registry, now time.Time, args []string) error {
@@ -813,6 +833,7 @@ func runReceive(root string, store *ledger.Store, registry protocol.Registry, no
 	inbox := fs.String("inbox", "", "peer inbox directory")
 	archive := fs.String("archive", "", "optional archive directory for processed bundles")
 	installSupport := fs.Bool("install-support", true, "install bundled protocol and signer support")
+	receiptSigner := fs.String("receipt-signer", "commitment-ledger", "signer identity for local receive receipts; empty disables receipts")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -843,8 +864,14 @@ func runReceive(root string, store *ledger.Store, registry protocol.Registry, no
 		}
 	}
 	for _, path := range paths {
-		if err := importBundlePath(root, store, registry, now, path, *installSupport, "receive", false); err != nil {
+		record, err := importBundlePath(root, store, registry, now, path, *installSupport, "receive", false)
+		if err != nil {
 			return err
+		}
+		if strings.TrimSpace(*receiptSigner) != "" {
+			if _, err := emitExchangeReceiptArtifact(root, store, registry, record, *receiptSigner, now); err != nil {
+				return err
+			}
 		}
 		if *archive != "" {
 			dst := filepath.Join(*archive, filepath.Base(path))
@@ -859,6 +886,7 @@ func runReceive(root string, store *ledger.Store, registry protocol.Registry, no
 
 func runDoctor(root string, store *ledger.Store, registry protocol.Registry, args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -869,6 +897,15 @@ func runDoctor(root string, store *ledger.Store, registry protocol.Registry, arg
 	report, err := doctorReport(root, store, registry)
 	if err != nil {
 		return err
+	}
+	if *jsonOut {
+		if err := printJSON(report); err != nil {
+			return err
+		}
+		if len(report.Errors) > 0 {
+			return fmt.Errorf("doctor found %d error(s)", len(report.Errors))
+		}
+		return nil
 	}
 	fmt.Printf("Artifacts indexed: %d\n", report.Artifacts)
 	fmt.Printf("Primary identities: %d\n", report.PrimaryIdentities)
@@ -888,37 +925,379 @@ func runDoctor(root string, store *ledger.Store, registry protocol.Registry, arg
 	return nil
 }
 
-func importBundlePath(root string, store *ledger.Store, registry protocol.Registry, now time.Time, inPath string, installSupport bool, mode string, announce bool) error {
-	data, err := os.ReadFile(inPath)
-	if err != nil {
-		return fmt.Errorf("read bundle %q: %w", inPath, err)
+func runRepair(root string, store *ledger.Store, registry protocol.Registry, args []string) error {
+	fs := flag.NewFlagSet("repair", flag.ContinueOnError)
+	records := fs.Bool("records", false, "rewrite Markdown projection records from JSONL state")
+	protocolCAS := fs.Bool("protocol-cas", false, "restore built-in frozen protocol docs into local CAS")
+	importArtifacts := fs.Bool("import-artifacts", false, "restore imported artifact envelopes from bundle source paths when possible")
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
-	var bundle exchange.Bundle
-	if err := json.Unmarshal(data, &bundle); err != nil {
-		return fmt.Errorf("parse bundle %q: %w", inPath, err)
+	if fs.NArg() != 0 {
+		return fmt.Errorf("repair does not accept positional references")
 	}
-	if bundle.Version != exchange.BundleVersion {
-		return fmt.Errorf("unsupported bundle version %q", bundle.Version)
+	if !*records && !*protocolCAS && !*importArtifacts {
+		*records = true
+		*protocolCAS = true
+		*importArtifacts = true
 	}
-	envelope, err := base64.StdEncoding.DecodeString(bundle.Envelope)
-	if err != nil {
-		return fmt.Errorf("decode bundle envelope: %w", err)
+
+	var rewrittenCommitments int
+	var rewrittenAssessments int
+	if *records {
+		commitments, err := store.LoadLatestCommitments()
+		if err != nil {
+			return err
+		}
+		for _, item := range commitments {
+			if err := store.WriteCommitmentRecord(item); err != nil {
+				return err
+			}
+			rewrittenCommitments++
+		}
+		assessments, err := store.LoadAssessments()
+		if err != nil {
+			return err
+		}
+		for _, item := range assessments {
+			commitmentRecord, ok := commitments[item.CommitmentID]
+			if !ok {
+				return fmt.Errorf("assessment %s references missing commitment %s", item.AssessmentID, item.CommitmentID)
+			}
+			if err := writeRepairTextFile(filepath.Join(root, "records", "assessments", item.AssessmentID+".md"), ledger.AssessmentMarkdown(item, commitmentRecord)); err != nil {
+				return err
+			}
+			rewrittenAssessments++
+		}
 	}
-	decoded, err := grid.DecodeEnvelope(envelope)
+	restoredProtocols := 0
+	if *protocolCAS {
+		for _, spec := range registry.Specs() {
+			if _, err := store.CAS.Put(spec.Bytes); err != nil {
+				return err
+			}
+			restoredProtocols++
+		}
+	}
+	restoredImportedArtifacts := 0
+	if *importArtifacts {
+		count, err := restoreImportedArtifacts(store)
+		if err != nil {
+			return err
+		}
+		restoredImportedArtifacts = count
+	}
+
+	fmt.Printf("Rewrote commitment records: %d\n", rewrittenCommitments)
+	fmt.Printf("Rewrote assessment records: %d\n", rewrittenAssessments)
+	fmt.Printf("Restored built-in protocol docs to CAS: %d\n", restoredProtocols)
+	fmt.Printf("Restored imported artifact envelopes: %d\n", restoredImportedArtifacts)
+	return nil
+}
+
+type identityInfo struct {
+	Name       string `json:"name"`
+	Source     string `json:"source"`
+	Path       string `json:"path"`
+	KeyID      string `json:"key_id"`
+	PublicKey  string `json:"public_key"`
+	HasPrivate bool   `json:"has_private"`
+}
+
+func runIdentity(root string, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("identity requires a subcommand: list, show, rotate")
+	}
+	switch args[0] {
+	case "list":
+		return runIdentityList(root, args[1:])
+	case "show":
+		return runIdentityShow(root, args[1:])
+	case "rotate":
+		return runIdentityRotate(root, args[1:])
+	default:
+		return fmt.Errorf("unknown identity subcommand %q", args[0])
+	}
+}
+
+func runIdentityList(root string, args []string) error {
+	fs := flag.NewFlagSet("identity list", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "emit JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	items, err := listIdentities(root)
 	if err != nil {
 		return err
 	}
+	if *jsonOut {
+		return printJSON(items)
+	}
+	for _, item := range items {
+		fmt.Printf("%s %s %s\n", item.Source, item.Name, item.KeyID)
+	}
+	return nil
+}
+
+func runIdentityShow(root string, args []string) error {
+	fs := flag.NewFlagSet("identity show", flag.ContinueOnError)
+	jsonOut := fs.Bool("json", false, "emit JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("identity show requires exactly one name")
+	}
+	item, err := loadIdentityInfo(root, fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSON(item)
+	}
+	fmt.Printf("Name: %s\n", item.Name)
+	fmt.Printf("Source: %s\n", item.Source)
+	fmt.Printf("Path: %s\n", item.Path)
+	fmt.Printf("Key ID: %s\n", item.KeyID)
+	fmt.Printf("Has Private Key: %s\n", yesNo(item.HasPrivate))
+	fmt.Printf("Public Key: %s\n", item.PublicKey)
+	return nil
+}
+
+func runIdentityRotate(root string, args []string) error {
+	fs := flag.NewFlagSet("identity rotate", flag.ContinueOnError)
+	name := fs.String("name", "", "identity name")
+	jsonOut := fs.Bool("json", false, "emit JSON")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *name == "" {
+		return fmt.Errorf("identity rotate requires --name")
+	}
+	current, _, _, err := identity.Load(root, *name)
+	if err != nil {
+		return err
+	}
+	archivePath, rotated, err := rotateIdentity(root, current)
+	if err != nil {
+		return err
+	}
+	if *jsonOut {
+		return printJSON(map[string]string{
+			"name":          rotated.Name,
+			"old_key_id":    current.KeyID,
+			"new_key_id":    rotated.KeyID,
+			"archive_path":  archivePath,
+			"identity_path": filepath.Join(root, identityPathForName(rotated.Name)),
+		})
+	}
+	fmt.Printf("Name: %s\n", rotated.Name)
+	fmt.Printf("Old Key ID: %s\n", current.KeyID)
+	fmt.Printf("New Key ID: %s\n", rotated.KeyID)
+	fmt.Printf("Archived Prior Identity: %s\n", archivePath)
+	return nil
+}
+
+func rotateIdentity(root string, current identity.Identity) (string, identity.Identity, error) {
+	path := filepath.Join(root, identityPathForName(current.Name))
+	archivePath := filepath.Join(root, "config", "identities", "archive", strings.TrimSuffix(filepath.Base(path), ".json")+"-"+current.KeyID+".json")
+	if err := os.MkdirAll(filepath.Dir(archivePath), 0o755); err != nil {
+		return "", identity.Identity{}, fmt.Errorf("mkdir identity archive: %w", err)
+	}
+	currentData, err := json.MarshalIndent(current, "", "  ")
+	if err != nil {
+		return "", identity.Identity{}, fmt.Errorf("marshal current identity: %w", err)
+	}
+	if err := os.WriteFile(archivePath, currentData, 0o600); err != nil {
+		return "", identity.Identity{}, fmt.Errorf("write identity archive: %w", err)
+	}
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return "", identity.Identity{}, fmt.Errorf("generate rotated identity: %w", err)
+	}
+	rotated := identity.Identity{
+		Name:       current.Name,
+		KeyID:      nextKeyID(current.KeyID),
+		PublicKey:  base64.StdEncoding.EncodeToString(pub),
+		PrivateKey: base64.StdEncoding.EncodeToString(priv),
+	}
+	out, err := json.MarshalIndent(rotated, "", "  ")
+	if err != nil {
+		return "", identity.Identity{}, fmt.Errorf("marshal rotated identity: %w", err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		return "", identity.Identity{}, fmt.Errorf("write rotated identity: %w", err)
+	}
+	return archivePath, rotated, nil
+}
+
+func nextKeyID(current string) string {
+	if idx := strings.LastIndex(current, "-v"); idx >= 0 {
+		prefix := current[:idx]
+		var version int
+		if _, err := fmt.Sscanf(current[idx+2:], "%d", &version); err == nil {
+			return fmt.Sprintf("%s-v%d", prefix, version+1)
+		}
+	}
+	return current + "-v2"
+}
+
+func listIdentities(root string) ([]identityInfo, error) {
+	var out []identityInfo
+	if items, err := listIdentityDir(root, filepath.Join(root, "config", "identities"), "primary"); err != nil {
+		return nil, err
+	} else {
+		out = append(out, items...)
+	}
+	if items, err := listIdentityDir(root, filepath.Join(root, "config", "imported-identities"), "imported"); err != nil {
+		return nil, err
+	} else {
+		out = append(out, items...)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Source == out[j].Source {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Source < out[j].Source
+	})
+	return out, nil
+}
+
+func listIdentityDir(root string, dir string, source string) ([]identityInfo, error) {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read identity dir %q: %w", dir, err)
+	}
+	out := []identityInfo{}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), ".json")
+		info, err := loadIdentityInfo(root, name)
+		if err != nil {
+			return nil, err
+		}
+		if info.Source == source {
+			out = append(out, info)
+		}
+	}
+	return out, nil
+}
+
+func loadIdentityInfo(root string, name string) (identityInfo, error) {
+	if ident, _, _, err := identity.Load(root, name); err == nil {
+		return identityInfo{
+			Name:       ident.Name,
+			Source:     "primary",
+			Path:       filepath.Join(root, identityPathForName(name)),
+			KeyID:      ident.KeyID,
+			PublicKey:  ident.PublicKey,
+			HasPrivate: true,
+		}, nil
+	}
+	ident, _, err := identity.LoadVerifier(root, name)
+	if err != nil {
+		return identityInfo{}, err
+	}
+	return identityInfo{
+		Name:       ident.Name,
+		Source:     "imported",
+		Path:       filepath.Join(root, "config", "imported-identities", importedIdentityFilename(name)),
+		KeyID:      ident.KeyID,
+		PublicKey:  ident.PublicKey,
+		HasPrivate: ident.PrivateKey != "",
+	}, nil
+}
+
+func restoreImportedArtifacts(store *ledger.Store) (int, error) {
+	imports, err := store.LoadImports()
+	if err != nil {
+		return 0, err
+	}
+	restored := 0
+	seen := map[string]struct{}{}
+	for i := len(imports) - 1; i >= 0; i-- {
+		record := imports[i]
+		if record.ArtifactCID == "" || record.SourcePath == "" {
+			continue
+		}
+		if _, ok := seen[record.ArtifactCID]; ok {
+			continue
+		}
+		seen[record.ArtifactCID] = struct{}{}
+		if _, err := store.CAS.Get(record.ArtifactCID); err == nil {
+			continue
+		}
+		data, err := os.ReadFile(record.SourcePath)
+		if err != nil {
+			return restored, fmt.Errorf("read import bundle %q for %s: %w", record.SourcePath, record.ArtifactCID, err)
+		}
+		bundle, err := exchange.ParseBundle(data)
+		if err != nil {
+			return restored, fmt.Errorf("parse import bundle %q for %s: %w", record.SourcePath, record.ArtifactCID, err)
+		}
+		if bundle.Artifact.ArtifactCID != record.ArtifactCID {
+			return restored, fmt.Errorf("bundle %q artifact mismatch: import=%s bundle=%s", record.SourcePath, record.ArtifactCID, bundle.Artifact.ArtifactCID)
+		}
+		envelope, err := base64.StdEncoding.DecodeString(bundle.Envelope)
+		if err != nil {
+			return restored, fmt.Errorf("decode import bundle %q envelope: %w", record.SourcePath, err)
+		}
+		if got, err := store.CAS.Put(envelope); err != nil {
+			return restored, err
+		} else if got != record.ArtifactCID {
+			return restored, fmt.Errorf("restored envelope cid mismatch for %s: got %s", record.ArtifactCID, got)
+		}
+		restored++
+	}
+	return restored, nil
+}
+
+func writeRepairTextFile(path string, body string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir for %q: %w", path, err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		return fmt.Errorf("write %q: %w", path, err)
+	}
+	return nil
+}
+
+func importBundlePath(root string, store *ledger.Store, registry protocol.Registry, now time.Time, inPath string, installSupport bool, mode string, announce bool) (model.ImportRecord, error) {
+	data, err := os.ReadFile(inPath)
+	if err != nil {
+		return model.ImportRecord{}, fmt.Errorf("read bundle %q: %w", inPath, err)
+	}
+	bundle, err := exchange.ParseBundle(data)
+	if err != nil {
+		return model.ImportRecord{}, fmt.Errorf("parse bundle %q: %w", inPath, err)
+	}
+	if bundle.Version != exchange.BundleVersion {
+		return model.ImportRecord{}, fmt.Errorf("unsupported bundle version %q", bundle.Version)
+	}
+	envelope, err := base64.StdEncoding.DecodeString(bundle.Envelope)
+	if err != nil {
+		return model.ImportRecord{}, fmt.Errorf("decode bundle envelope: %w", err)
+	}
+	decoded, err := grid.DecodeEnvelope(envelope)
+	if err != nil {
+		return model.ImportRecord{}, err
+	}
 	if decoded.EnvelopeCID != bundle.Artifact.ArtifactCID {
-		return fmt.Errorf("bundle artifact cid mismatch: record=%s decoded=%s", bundle.Artifact.ArtifactCID, decoded.EnvelopeCID)
+		return model.ImportRecord{}, fmt.Errorf("bundle artifact cid mismatch: record=%s decoded=%s", bundle.Artifact.ArtifactCID, decoded.EnvelopeCID)
 	}
 	if decoded.ProtocolPCID != bundle.Artifact.ProtocolPCID {
-		return fmt.Errorf("bundle protocol pCID mismatch: record=%s decoded=%s", bundle.Artifact.ProtocolPCID, decoded.ProtocolPCID)
+		return model.ImportRecord{}, fmt.Errorf("bundle protocol pCID mismatch: record=%s decoded=%s", bundle.Artifact.ProtocolPCID, decoded.ProtocolPCID)
 	}
 	if decoded.PayloadCID != bundle.Artifact.PayloadCID {
-		return fmt.Errorf("bundle payload cid mismatch: record=%s decoded=%s", bundle.Artifact.PayloadCID, decoded.PayloadCID)
+		return model.ImportRecord{}, fmt.Errorf("bundle payload cid mismatch: record=%s decoded=%s", bundle.Artifact.PayloadCID, decoded.PayloadCID)
 	}
 	if decoded.ProofCID != bundle.Artifact.ProofCID {
-		return fmt.Errorf("bundle proof cid mismatch: record=%s decoded=%s", bundle.Artifact.ProofCID, decoded.ProofCID)
+		return model.ImportRecord{}, fmt.Errorf("bundle proof cid mismatch: record=%s decoded=%s", bundle.Artifact.ProofCID, decoded.ProofCID)
 	}
 
 	importRecord := model.ImportRecord{
@@ -935,47 +1314,47 @@ func importBundlePath(root string, store *ledger.Store, registry protocol.Regist
 	if installSupport {
 		if bundle.Protocol != nil {
 			if err := installProtocolSupport(root, *bundle.Protocol); err != nil {
-				return err
+				return model.ImportRecord{}, err
 			}
 			importRecord.InstalledProtocolPCID = bundle.Protocol.ProtocolPCID
 		}
 		if bundle.Signer != nil {
 			if err := installSignerSupport(root, *bundle.Signer); err != nil {
-				return err
+				return model.ImportRecord{}, err
 			}
 			importRecord.InstalledSignerIdentity = bundle.Signer.Name
 		}
 	}
 	if _, err := store.CAS.Put(envelope); err != nil {
-		return err
+		return model.ImportRecord{}, err
 	}
 
 	artifacts, err := store.LoadArtifacts()
 	if err != nil {
-		return err
+		return model.ImportRecord{}, err
 	}
 	if existing, ok := artifactByCID(artifacts, bundle.Artifact.ArtifactCID); ok {
 		if !sameArtifactRecord(existing, bundle.Artifact) {
-			return fmt.Errorf("artifact conflict for %s", bundle.Artifact.ArtifactCID)
+			return model.ImportRecord{}, fmt.Errorf("artifact conflict for %s", bundle.Artifact.ArtifactCID)
 		}
 	} else {
 		if err := store.AppendArtifact(bundle.Artifact, envelope); err != nil {
-			return err
+			return model.ImportRecord{}, err
 		}
 	}
 
 	commitments, err := store.LoadLatestCommitments()
 	if err != nil {
-		return err
+		return model.ImportRecord{}, err
 	}
 	if bundle.Commitment != nil {
 		if current, ok := commitments[bundle.Commitment.CommitmentID]; ok {
 			if !sameCommitment(current, *bundle.Commitment) {
-				return fmt.Errorf("commitment conflict for %s", bundle.Commitment.CommitmentID)
+				return model.ImportRecord{}, fmt.Errorf("commitment conflict for %s", bundle.Commitment.CommitmentID)
 			}
 		} else {
 			if err := store.AppendCommitment(*bundle.Commitment); err != nil {
-				return err
+				return model.ImportRecord{}, err
 			}
 			commitments[bundle.Commitment.CommitmentID] = *bundle.Commitment
 		}
@@ -984,15 +1363,15 @@ func importBundlePath(root string, store *ledger.Store, registry protocol.Regist
 	if bundle.Evidence != nil {
 		existingEvidence, err := store.LoadEvidence()
 		if err != nil {
-			return err
+			return model.ImportRecord{}, err
 		}
 		if current, ok := evidenceByID(existingEvidence, bundle.Evidence.EvidenceID); ok {
 			if !sameEvidence(current, *bundle.Evidence) {
-				return fmt.Errorf("evidence conflict for %s", bundle.Evidence.EvidenceID)
+				return model.ImportRecord{}, fmt.Errorf("evidence conflict for %s", bundle.Evidence.EvidenceID)
 			}
 		} else {
 			if err := store.AppendEvidence(*bundle.Evidence); err != nil {
-				return err
+				return model.ImportRecord{}, err
 			}
 		}
 	}
@@ -1000,11 +1379,11 @@ func importBundlePath(root string, store *ledger.Store, registry protocol.Regist
 	if bundle.Assessment != nil {
 		existingAssessments, err := store.LoadAssessments()
 		if err != nil {
-			return err
+			return model.ImportRecord{}, err
 		}
 		if current, ok := assessmentByID(existingAssessments, bundle.Assessment.AssessmentID); ok {
 			if !sameAssessment(current, *bundle.Assessment) {
-				return fmt.Errorf("assessment conflict for %s", bundle.Assessment.AssessmentID)
+				return model.ImportRecord{}, fmt.Errorf("assessment conflict for %s", bundle.Assessment.AssessmentID)
 			}
 		} else {
 			commitmentRecord := model.Commitment{}
@@ -1014,16 +1393,16 @@ func importBundlePath(root string, store *ledger.Store, registry protocol.Regist
 				commitmentRecord = current
 			}
 			if commitmentRecord.CommitmentID == "" {
-				return fmt.Errorf("assessment import requires related commitment projection")
+				return model.ImportRecord{}, fmt.Errorf("assessment import requires related commitment projection")
 			}
 			if err := store.AppendAssessment(*bundle.Assessment, commitmentRecord); err != nil {
-				return err
+				return model.ImportRecord{}, err
 			}
 		}
 	}
 
 	if err := store.AppendImport(importRecord); err != nil {
-		return err
+		return model.ImportRecord{}, err
 	}
 	if announce {
 		fmt.Printf("Imported %s from %s\n", emptyFallback(bundle.Artifact.RelatedID, bundle.Artifact.ArtifactCID), inPath)
@@ -1034,7 +1413,7 @@ func importBundlePath(root string, store *ledger.Store, registry protocol.Regist
 		}
 	}
 	_ = registry
-	return nil
+	return importRecord, nil
 }
 
 func sendBundleFilename(now time.Time, ref string) string {
@@ -1117,6 +1496,11 @@ func inspectReference(root string, registry protocol.Registry, ref string, artif
 		}
 		return buildArtifactInspectView(root, registry, ref, artifact, imports), nil
 	}
+	for _, artifact := range artifacts {
+		if artifact.RelatedID == ref {
+			return buildArtifactInspectView(root, registry, ref, artifact, imports), nil
+		}
+	}
 
 	return inspectView{}, fmt.Errorf("unknown inspect reference %q", ref)
 }
@@ -1160,6 +1544,11 @@ func resolveArtifactReference(ref string, artifacts []model.ArtifactRecord, comm
 			if artifact, ok := artifactByCID[item.ArtifactCID]; ok {
 				return artifact, nil
 			}
+		}
+	}
+	for _, artifact := range artifacts {
+		if artifact.RelatedID == ref {
+			return artifact, nil
 		}
 	}
 	return model.ArtifactRecord{}, fmt.Errorf("unknown verify reference %q", ref)
@@ -1751,23 +2140,23 @@ func printImportReport(policy trust.Policy, imports []model.ImportRecord) {
 }
 
 type importSummary struct {
-	Total            int
-	UniqueArtifacts  int
-	UniqueSources    int
-	SupportInstalled int
-	Trusted          int
-	Untrusted        int
-	ByMode           map[string]int
-	Modes            []string
-	BySource         map[string]importSourceSummary
-	Sources          []string
+	Total            int                            `json:"total"`
+	UniqueArtifacts  int                            `json:"unique_artifacts"`
+	UniqueSources    int                            `json:"unique_sources"`
+	SupportInstalled int                            `json:"support_installed"`
+	Trusted          int                            `json:"trusted"`
+	Untrusted        int                            `json:"untrusted"`
+	ByMode           map[string]int                 `json:"by_mode"`
+	Modes            []string                       `json:"modes"`
+	BySource         map[string]importSourceSummary `json:"by_source"`
+	Sources          []string                       `json:"sources"`
 }
 
 type importSourceSummary struct {
-	Count          int
-	Trusted        bool
-	Modes          []string
-	LastImportedAt string
+	Count          int      `json:"count"`
+	Trusted        bool     `json:"trusted"`
+	Modes          []string `json:"modes"`
+	LastImportedAt string   `json:"last_imported_at"`
 }
 
 func summarizeImports(policy trust.Policy, imports []model.ImportRecord) importSummary {
@@ -1831,17 +2220,29 @@ func stringSliceContains(items []string, want string) bool {
 	return false
 }
 
+func printJSON(v any) error {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal json: %w", err)
+	}
+	fmt.Println(string(data))
+	return nil
+}
+
 type doctorSummary struct {
-	Artifacts          int
-	PrimaryIdentities  int
-	ImportedIdentities int
-	ImportedProtocols  int
-	Warnings           []string
-	Errors             []string
+	Artifacts          int      `json:"artifacts"`
+	PrimaryIdentities  int      `json:"primary_identities"`
+	ImportedIdentities int      `json:"imported_identities"`
+	ImportedProtocols  int      `json:"imported_protocols"`
+	Warnings           []string `json:"warnings"`
+	Errors             []string `json:"errors"`
 }
 
 func doctorReport(root string, store *ledger.Store, registry protocol.Registry) (doctorSummary, error) {
-	summary := doctorSummary{}
+	summary := doctorSummary{
+		Warnings: []string{},
+		Errors:   []string{},
+	}
 	artifacts, err := store.LoadArtifacts()
 	if err != nil {
 		return summary, err
@@ -2087,6 +2488,48 @@ func emitAssessmentArtifact(root string, store *ledger.Store, registry protocol.
 	return item, nil
 }
 
+func emitExchangeReceiptArtifact(root string, store *ledger.Store, registry protocol.Registry, record model.ImportRecord, receiver string, now time.Time) (string, error) {
+	ident, pub, priv, err := identity.LoadOrCreate(root, receiver)
+	if err != nil {
+		return "", err
+	}
+	receiptID := fmt.Sprintf("RECEIPT-%s-%s", now.Format("20060102"), sanitizeFilename(record.ArtifactCID))
+	payloadBytes, err := protocol.MarshalPayload(protocol.ExchangeReceiptPayload{
+		Kind:                    "exchange_receipt",
+		ReceiptID:               receiptID,
+		ReceivedArtifactCID:     record.ArtifactCID,
+		RelatedID:               record.RelatedID,
+		SourcePath:              record.SourcePath,
+		Receiver:                ident.Name,
+		ReceivedAt:              now.Format(time.RFC3339),
+		SupportInstalled:        record.SupportInstalled,
+		InstalledProtocolPCID:   record.InstalledProtocolPCID,
+		InstalledSignerIdentity: record.InstalledSignerIdentity,
+	})
+	if err != nil {
+		return "", err
+	}
+	artifact, err := grid.Build(registry.MustPCID(protocol.ExchangeReceipt), payloadBytes, ident.Name, ident.KeyID, pub, priv)
+	if err != nil {
+		return "", err
+	}
+	if err := store.AppendArtifact(model.ArtifactRecord{
+		ArtifactCID:  artifact.EnvelopeCID,
+		ProtocolPCID: artifact.ProtocolPCID,
+		Kind:         "exchange_receipt",
+		Signer:       ident.Name,
+		SignerKeyID:  ident.KeyID,
+		PayloadCID:   artifact.PayloadCID,
+		ProofCID:     artifact.ProofCID,
+		ObservedAt:   now.Format(time.RFC3339),
+		RelatedID:    receiptID,
+		RelatedCID:   record.ArtifactCID,
+	}, artifact.Envelope); err != nil {
+		return "", err
+	}
+	return artifact.EnvelopeCID, nil
+}
+
 func emitConformanceArtifact(root string, store *ledger.Store, registry protocol.Registry, signer string, version string, now time.Time) (string, error) {
 	ident, pub, priv, err := identity.LoadOrCreate(root, signer)
 	if err != nil {
@@ -2122,12 +2565,14 @@ func buildConformancePayload(registry protocol.Registry, version string, now tim
 		registry.MustPCID(protocol.CommitmentEvidence),
 		registry.MustPCID(protocol.CommitmentAssessmentV1),
 		registry.MustPCID(protocol.CommitmentAssessment),
+		registry.MustPCID(protocol.ExchangeReceipt),
 		registry.MustPCID(protocol.ImplementationConformance),
 	}
 	emitted := []string{
 		registry.MustPCID(protocol.CommitmentPromise),
 		registry.MustPCID(protocol.CommitmentEvidence),
 		registry.MustPCID(protocol.CommitmentAssessment),
+		registry.MustPCID(protocol.ExchangeReceipt),
 		registry.MustPCID(protocol.ImplementationConformance),
 	}
 	historical := []string{
@@ -2147,6 +2592,7 @@ func buildConformancePayload(registry protocol.Registry, version string, now tim
 			"claimed_protocol_pcids names the frozen protocol docs the implementation can interpret locally.",
 			"emitted_protocol_pcids names the frozen protocol docs current commands emit for new artifacts.",
 			"historical_protocol_pcids names older frozen docs retained for reading historical local artifacts but not emitted by current commands.",
+			"receive may emit local exchange_receipt artifacts acknowledging imported bundle processing.",
 		},
 		ClaimedAt: now.Format(time.RFC3339),
 	}

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -154,6 +155,9 @@ func TestLifecycleFlowUsesV2EvidenceAndAssessmentProtocols(t *testing.T) {
 	registry, err := protocol.Load(root)
 	if err != nil {
 		t.Fatalf("protocol.Load: %v", err)
+	}
+	if err := persistProtocolSpecs(store, registry); err != nil {
+		t.Fatalf("persistProtocolSpecs: %v", err)
 	}
 
 	repoPath := filepath.Join(root, "fixture-repo")
@@ -353,6 +357,9 @@ func TestRunInspectResolvesIDsAndArtifactCIDs(t *testing.T) {
 	registry, err := protocol.Load(root)
 	if err != nil {
 		t.Fatalf("protocol.Load: %v", err)
+	}
+	if err := persistProtocolSpecs(store, registry); err != nil {
+		t.Fatalf("persistProtocolSpecs: %v", err)
 	}
 
 	repoPath := filepath.Join(root, "fixture-repo")
@@ -799,6 +806,73 @@ func TestRunDoctorDetectsMissingArtifactCAS(t *testing.T) {
 	}
 }
 
+func TestRunRepairRebuildsRecordsAndProtocolCAS(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	if err := persistProtocolSpecs(store, registry); err != nil {
+		t.Fatalf("persistProtocolSpecs: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(root, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+
+	now := time.Date(2026, 6, 24, 22, 30, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(root, store, registry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan: %v", err)
+	}
+	if err := runCommit(root, store, registry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+	commitment := latestCommitment(t, store)
+	recordPath := filepath.Join(root, "records", "commitments", commitment.CommitmentID+".md")
+	if err := os.Remove(recordPath); err != nil {
+		t.Fatalf("remove record: %v", err)
+	}
+	pcid := registry.MustPCID(protocol.CommitmentPromise)
+	if err := os.Remove(store.CAS.Path(pcid)); err != nil {
+		t.Fatalf("remove protocol CAS object: %v", err)
+	}
+
+	out := captureStdout(t, func() error {
+		return runRepair(root, store, registry, nil)
+	})
+	if !strings.Contains(out, "Rewrote commitment records: 1") ||
+		!strings.Contains(out, "Restored built-in protocol docs to CAS: 7") ||
+		!strings.Contains(out, "Restored imported artifact envelopes: 0") {
+		t.Fatalf("unexpected repair output:\n%s", out)
+	}
+	if _, err := os.Stat(recordPath); err != nil {
+		t.Fatalf("expected repaired record file: %v", err)
+	}
+	if _, err := os.Stat(store.CAS.Path(pcid)); err != nil {
+		t.Fatalf("expected repaired protocol CAS file: %v", err)
+	}
+}
+
 func TestRunAssessRejectsKeptForIncompleteParentTarget(t *testing.T) {
 	root := t.TempDir()
 	copyProtocolDocs(t, root)
@@ -961,11 +1035,11 @@ func TestConformanceArtifactDistinguishesClaimedEmittedAndHistoricalProtocols(t 
 
 	now := time.Date(2026, 6, 24, 15, 0, 0, 0, time.FixedZone("PDT", -7*3600))
 	payload := buildConformancePayload(registry, "v0.1.0", now)
-	if len(payload.ClaimedProtocolPCIDs) != 6 {
-		t.Fatalf("claimed_protocol_pcids len = %d, want 6", len(payload.ClaimedProtocolPCIDs))
+	if len(payload.ClaimedProtocolPCIDs) != 7 {
+		t.Fatalf("claimed_protocol_pcids len = %d, want 7", len(payload.ClaimedProtocolPCIDs))
 	}
-	if len(payload.EmittedProtocolPCIDs) != 4 {
-		t.Fatalf("emitted_protocol_pcids len = %d, want 4", len(payload.EmittedProtocolPCIDs))
+	if len(payload.EmittedProtocolPCIDs) != 5 {
+		t.Fatalf("emitted_protocol_pcids len = %d, want 5", len(payload.EmittedProtocolPCIDs))
 	}
 	if len(payload.HistoricalProtocolPCIDs) != 2 {
 		t.Fatalf("historical_protocol_pcids len = %d, want 2", len(payload.HistoricalProtocolPCIDs))
@@ -1105,6 +1179,13 @@ func TestRunSendAndReceiveRoundTrip(t *testing.T) {
 	if len(archived) != 1 {
 		t.Fatalf("archived files = %d, want 1", len(archived))
 	}
+	artifacts, err := importStore.LoadArtifacts()
+	if err != nil {
+		t.Fatalf("LoadArtifacts import: %v", err)
+	}
+	if len(artifacts) != 2 {
+		t.Fatalf("got %d imported artifacts, want 2", len(artifacts))
+	}
 
 	verifyOut := captureStdout(t, func() error {
 		return runVerify(importRoot, importStore, importRegistry, []string{commitment.CommitmentID})
@@ -1112,6 +1193,17 @@ func TestRunSendAndReceiveRoundTrip(t *testing.T) {
 	if !strings.Contains(verifyOut, "Kind: commitment_promise") ||
 		!strings.Contains(verifyOut, "Latest Import Mode: receive") {
 		t.Fatalf("unexpected receive verify output:\n%s", verifyOut)
+	}
+	receiptArtifact := artifacts[1]
+	if receiptArtifact.Kind != "exchange_receipt" {
+		t.Fatalf("receipt artifact kind = %q, want exchange_receipt", receiptArtifact.Kind)
+	}
+	receiptOut := captureStdout(t, func() error {
+		return runVerify(importRoot, importStore, importRegistry, []string{receiptArtifact.RelatedID})
+	})
+	if !strings.Contains(receiptOut, "Kind: exchange_receipt") ||
+		!strings.Contains(receiptOut, "Protocol: "+protocol.ExchangeReceipt) {
+		t.Fatalf("unexpected receipt verify output:\n%s", receiptOut)
 	}
 }
 
@@ -1228,6 +1320,99 @@ func TestRunStatusExchangeAndReportImports(t *testing.T) {
 		if !strings.Contains(reportOut, fragment) {
 			t.Fatalf("report --imports output missing %q:\n%s", fragment, reportOut)
 		}
+	}
+}
+
+func TestRunDoctorAndReportJSON(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	inbox := filepath.Join(root, "peer-inbox")
+	bundlePath := filepath.Join(inbox, "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+	if err := runReceive(root, store, registry, time.Date(2026, 6, 24, 21, 45, 0, 0, time.FixedZone("PDT", -7*3600)), []string{"--inbox", inbox}); err != nil {
+		t.Fatalf("runReceive: %v", err)
+	}
+
+	doctorOut := captureStdout(t, func() error {
+		return runDoctor(root, store, registry, []string{"--json"})
+	})
+	if !strings.Contains(doctorOut, "\"artifacts\": 2") || !strings.Contains(doctorOut, "\"errors\": []") {
+		t.Fatalf("unexpected doctor json output:\n%s", doctorOut)
+	}
+
+	reportOut := captureStdout(t, func() error {
+		return runReport(root, store, []string{"--imports", "--json"})
+	})
+	if !strings.Contains(reportOut, strconv.Quote(bundlePath)+": {") ||
+		!strings.Contains(reportOut, "\"trusted\": false") {
+		t.Fatalf("unexpected report json output:\n%s", reportOut)
+	}
+}
+
+func TestRunIdentityRotateArchivesAndReplacesKey(t *testing.T) {
+	root := t.TempDir()
+	if _, _, _, err := identity.LoadOrCreate(root, "Alice"); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+	before, err := loadIdentityInfo(root, "Alice")
+	if err != nil {
+		t.Fatalf("loadIdentityInfo before: %v", err)
+	}
+
+	out := captureStdout(t, func() error {
+		return runIdentity(root, []string{"rotate", "--name", "Alice"})
+	})
+	if !strings.Contains(out, "Old Key ID: "+before.KeyID) || !strings.Contains(out, "New Key ID: alice-ed25519-v2") {
+		t.Fatalf("unexpected rotate output:\n%s", out)
+	}
+
+	after, err := loadIdentityInfo(root, "Alice")
+	if err != nil {
+		t.Fatalf("loadIdentityInfo after: %v", err)
+	}
+	if after.KeyID != "alice-ed25519-v2" {
+		t.Fatalf("rotated key id = %q, want alice-ed25519-v2", after.KeyID)
+	}
+	archivePath := filepath.Join(root, "config", "identities", "archive", "alice-"+before.KeyID+".json")
+	if _, err := os.Stat(archivePath); err != nil {
+		t.Fatalf("expected archived identity: %v", err)
+	}
+}
+
+func TestRunRepairRestoresImportedArtifactEnvelope(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	inbox := filepath.Join(root, "peer-inbox")
+	bundlePath := filepath.Join(inbox, "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+	now := time.Date(2026, 6, 24, 22, 45, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runImportAt(root, store, registry, now, []string{"--in", bundlePath}); err != nil {
+		t.Fatalf("runImportAt: %v", err)
+	}
+	if err := os.Remove(store.CAS.Path(bundle.Artifact.ArtifactCID)); err != nil {
+		t.Fatalf("remove imported artifact CAS: %v", err)
+	}
+
+	out := captureStdout(t, func() error {
+		return runRepair(root, store, registry, []string{"--import-artifacts"})
+	})
+	if !strings.Contains(out, "Restored imported artifact envelopes: 1") {
+		t.Fatalf("unexpected repair output:\n%s", out)
+	}
+	if _, err := os.Stat(store.CAS.Path(bundle.Artifact.ArtifactCID)); err != nil {
+		t.Fatalf("expected repaired imported artifact CAS: %v", err)
 	}
 }
 

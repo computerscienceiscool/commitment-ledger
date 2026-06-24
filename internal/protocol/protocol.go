@@ -15,6 +15,7 @@ const (
 	CommitmentEvidence        = "commitment-evidence-v2"
 	CommitmentAssessmentV1    = "commitment-assessment-v1"
 	CommitmentAssessment      = "commitment-assessment-v2"
+	ExchangeReceipt           = "exchange-receipt-v1"
 	ImplementationConformance = "implementation-conformance-v1"
 )
 
@@ -45,6 +46,7 @@ func Load(root string) (Registry, error) {
 		CommitmentEvidence,
 		CommitmentAssessmentV1,
 		CommitmentAssessment,
+		ExchangeReceipt,
 		ImplementationConformance,
 	}
 	reg := Registry{ByName: map[string]Spec{}}
