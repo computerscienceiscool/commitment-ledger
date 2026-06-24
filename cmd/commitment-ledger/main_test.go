@@ -1,11 +1,19 @@
 package main
 
 import (
+	"encoding/json"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"commitment-ledger/internal/config"
 	"commitment-ledger/internal/ledger"
 	"commitment-ledger/internal/model"
+	"commitment-ledger/internal/protocol"
 )
 
 func TestResolveBasisMapsAndValidatesCommitmentEvidence(t *testing.T) {
@@ -75,4 +83,240 @@ func TestValidateEvidenceInputRejectsMismatches(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unknown target") {
 		t.Fatalf("unknown target error = %v, want unknown target", err)
 	}
+}
+
+func TestLifecycleFlowUsesV2EvidenceAndAssessmentProtocols(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{
+			{
+				Name:      "fixture",
+				LocalPath: repoPath,
+				Branch:    "main",
+				TodoFile:  "TODO/TODO.md",
+				Enabled:   true,
+			},
+		},
+	}
+	configPath := filepath.Join(root, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+
+	scanTime := time.Date(2026, 6, 24, 10, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(root, store, registry, scanTime, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan initial: %v", err)
+	}
+
+	if err := runCommit(root, store, registry, scanTime.Add(5*time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+
+	commitments, err := store.LoadLatestCommitments()
+	if err != nil {
+		t.Fatalf("LoadLatestCommitments: %v", err)
+	}
+	if len(commitments) != 1 {
+		t.Fatalf("got %d commitments, want 1", len(commitments))
+	}
+	var current model.Commitment
+	for _, item := range commitments {
+		current = item
+	}
+	if current.ProtocolPCID != registry.MustPCID(protocol.CommitmentPromise) {
+		t.Fatalf("commitment protocol pCID = %q, want promise v1 pCID %q", current.ProtocolPCID, registry.MustPCID(protocol.CommitmentPromise))
+	}
+
+	writeFixtureRepo(t, repoPath, true)
+	gitCommitAll(t, repoPath, "Complete subtask 1")
+
+	secondScan := scanTime.Add(2 * time.Hour)
+	if err := runScan(root, store, registry, secondScan, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan second: %v", err)
+	}
+
+	evidenceItems, err := store.LoadEvidence()
+	if err != nil {
+		t.Fatalf("LoadEvidence: %v", err)
+	}
+	var checkedEvidence model.Evidence
+	for _, item := range evidenceItems {
+		if item.CommitmentID == current.CommitmentID && item.EvidenceType == model.EvidenceTypeTodoChecked {
+			checkedEvidence = item
+			break
+		}
+	}
+	if checkedEvidence.EvidenceID == "" {
+		t.Fatal("expected todo_checked evidence for the commitment")
+	}
+	if checkedEvidence.ProtocolPCID != registry.MustPCID(protocol.CommitmentEvidence) {
+		t.Fatalf("evidence protocol pCID = %q, want evidence v2 pCID %q", checkedEvidence.ProtocolPCID, registry.MustPCID(protocol.CommitmentEvidence))
+	}
+
+	if err := runAssess(root, store, registry, secondScan.Add(10*time.Minute), []string{
+		"--commitment", current.CommitmentID,
+		"--assessor", "Alice",
+		"--status", model.StatusKept,
+		"--basis", checkedEvidence.EvidenceID,
+		"--notes", "Completed before the due date.",
+	}); err != nil {
+		t.Fatalf("runAssess: %v", err)
+	}
+
+	assessments, err := store.LoadAssessments()
+	if err != nil {
+		t.Fatalf("LoadAssessments: %v", err)
+	}
+	if len(assessments) != 1 {
+		t.Fatalf("got %d assessments, want 1", len(assessments))
+	}
+	assessment := assessments[0]
+	if assessment.ProtocolPCID != registry.MustPCID(protocol.CommitmentAssessment) {
+		t.Fatalf("assessment protocol pCID = %q, want assessment v2 pCID %q", assessment.ProtocolPCID, registry.MustPCID(protocol.CommitmentAssessment))
+	}
+	if len(assessment.Basis) != 1 || assessment.Basis[0] != checkedEvidence.ArtifactCID {
+		t.Fatalf("assessment basis = %#v, want [%q]", assessment.Basis, checkedEvidence.ArtifactCID)
+	}
+
+	reportOut := captureStdout(t, func() error {
+		return runReport(store, []string{"--promiser", "Alice"})
+	})
+	if !strings.Contains(reportOut, "Promiser: Alice") || !strings.Contains(reportOut, "Kept: 1") {
+		t.Fatalf("unexpected report output:\n%s", reportOut)
+	}
+
+	statusOut := captureStdout(t, func() error {
+		return runStatus(store)
+	})
+	if !strings.Contains(statusOut, "Kept commitments: 1") || !strings.Contains(statusOut, "Broken: 0") {
+		t.Fatalf("unexpected status output:\n%s", statusOut)
+	}
+}
+
+func copyProtocolDocs(t *testing.T, root string) {
+	t.Helper()
+	repoRoot := repoRoot(t)
+	sourceDir := filepath.Join(repoRoot, "docs", "protocols")
+	destDir := filepath.Join(root, "docs", "protocols")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatalf("mkdir protocol dir: %v", err)
+	}
+	entries, err := os.ReadDir(sourceDir)
+	if err != nil {
+		t.Fatalf("read protocol dir: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(sourceDir, entry.Name()))
+		if err != nil {
+			t.Fatalf("read protocol doc %s: %v", entry.Name(), err)
+		}
+		if err := os.WriteFile(filepath.Join(destDir, entry.Name()), data, 0o644); err != nil {
+			t.Fatalf("write protocol doc %s: %v", entry.Name(), err)
+		}
+	}
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	return filepath.Clean(filepath.Join(wd, "..", ".."))
+}
+
+func writeConfig(t *testing.T, path string, cfg config.ReposConfig) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal config: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+}
+
+func writeFixtureRepo(t *testing.T, repoPath string, completed bool) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(repoPath, "TODO"), 0o755); err != nil {
+		t.Fatalf("mkdir TODO dir: %v", err)
+	}
+	index := "# TODO Index\n\n- [ ] TODO-ravud - Ship welcome flow (`TODO/TODO-ravud-ship-welcome-flow.md`)\n"
+	subtask := "- [ ] 1. Add route\n"
+	if completed {
+		subtask = "- [x] 1. Add route\n"
+	}
+	detail := "# TODO-ravud: Ship welcome flow\n\n" + subtask + "- [ ] 2. Add docs\n"
+	if err := os.WriteFile(filepath.Join(repoPath, "TODO", "TODO.md"), []byte(index), 0o644); err != nil {
+		t.Fatalf("write TODO.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoPath, "TODO", "TODO-ravud-ship-welcome-flow.md"), []byte(detail), 0o644); err != nil {
+		t.Fatalf("write detail file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoPath, ".git")); os.IsNotExist(err) {
+		runGit(t, repoPath, "init", "-b", "main")
+		runGit(t, repoPath, "config", "user.name", "Fixture User")
+		runGit(t, repoPath, "config", "user.email", "fixture@example.com")
+	} else if err != nil {
+		t.Fatalf("stat .git: %v", err)
+	}
+}
+
+func gitCommitAll(t *testing.T, repoPath string, message string) {
+	t.Helper()
+	runGit(t, repoPath, "add", "TODO/TODO.md", "TODO/TODO-ravud-ship-welcome-flow.md")
+	runGit(t, repoPath, "commit", "-m", message)
+}
+
+func runGit(t *testing.T, repoPath string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", repoPath}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func captureStdout(t *testing.T, fn func() error) string {
+	t.Helper()
+	original := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	runErr := fn()
+	_ = w.Close()
+	os.Stdout = original
+	data, readErr := io.ReadAll(r)
+	_ = r.Close()
+	if runErr != nil {
+		t.Fatalf("captured function error: %v", runErr)
+	}
+	if readErr != nil {
+		t.Fatalf("read captured stdout: %v", readErr)
+	}
+	return string(data)
 }

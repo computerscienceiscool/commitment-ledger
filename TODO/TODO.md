@@ -12,4 +12,4 @@ This list is sorted by priority. TODO handles are stable proquint IDs.
 - [x] TODO-mipog - Parse numeric and proquint TODOs with detail-file subtasks (`TODO/TODO-mipog-parse-todos-and-subtasks.md`)
 - [x] TODO-tuvan - Store append-only ledger records in JSONL and Markdown (`TODO/TODO-tuvan-ledger-record-storage.md`)
 - [x] TODO-sorik - Implement commitment lifecycle commands and reports (`TODO/TODO-sorik-commitment-lifecycle-and-reports.md`)
-- [ ] TODO-vubat - Add deterministic tests for parsing, storage, and status transitions (`TODO/TODO-vubat-core-test-coverage.md`)
+- [x] TODO-vubat - Add deterministic tests for parsing, storage, and status transitions (`TODO/TODO-vubat-core-test-coverage.md`)
