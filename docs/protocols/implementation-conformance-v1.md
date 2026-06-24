@@ -7,7 +7,9 @@ Audience: Commitment Ledger operators and downstream readers
 
 This protocol defines a conformance-claim artifact stating which local protocol
 documents this implementation claims to speak and which local projection rules
-it uses.
+it uses. A repo may also mirror that claim in human-facing publication entries
+such as `CHANGELOG.md`, but those publication entries do not replace the signed
+artifact.
 
 ## Protocol Identity
 
@@ -51,6 +53,8 @@ The payload bytes are UTF-8 JSON with this shape:
 - `claimed_protocol_pcids` names the frozen protocol docs the implementation can interpret locally.
 - `emitted_protocol_pcids` names the frozen protocol docs the current commands emit for new artifacts.
 - `historical_protocol_pcids` names older frozen docs retained for reading historical local artifacts but not emitted by current commands.
+- Repo-level publication entries may restate this claim by exact doc-CID for
+  human readers, but the signed artifact remains the machine-readable source.
 - Projection rules are informative local behavior notes and do not replace the
   raw artifacts or protocol docs.
 

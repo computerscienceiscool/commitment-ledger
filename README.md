@@ -32,6 +32,7 @@ preserving later assessment as signed, CID-addressed protocol artifacts.
 - `internal/assessment`: manual assessment helpers
 - `internal/report`: summary generation
 - `config/repos.json`: tracked repo configuration
+- `CHANGELOG.md`: repo-level conformance publication entries
 - `docs/`: design notes, protocol docs, and the source spec PDF
 - `docs/protocols/`: local protocol documents frozen by exact bytes
 - `data/`: append-only machine-readable ledger files
@@ -121,6 +122,7 @@ Observed work targets are always branch-qualified, for example
 - Assessment basis references must resolve to evidence artifacts for the same commitment.
 - Protocol docs under `docs/protocols/` define local pCIDs by exact document bytes.
 - Current emission stays on `commitment-promise-v1`, `implementation-conformance-v1`, `commitment-evidence-v2`, and `commitment-assessment-v2`; older frozen docs remain in-repo for historical pCID continuity.
+- Conformance is published in two forms: signed `implementation_conformance` artifacts and repo-level `CHANGELOG.md` entries naming exact frozen spec doc-CIDs.
 - Commitments, evidence, assessments, and conformance claims are emitted as
   signed `grid([42(pCID), payload, proof])` artifacts stored in local CAS.
 - JSONL and Markdown files are projections over those raw artifacts.
@@ -140,3 +142,4 @@ Observed work targets are always branch-qualified, for example
 ## Version Notes
 
 - `docs/protocol-migration.md` explains the local `v1` to `v2` evidence and assessment transition and how conformance distinguishes claimed, emitted, and historical frozen protocol docs.
+- `CHANGELOG.md` mirrors the current claimed, emitted, and historical protocol surface in the repo-level publication shape the PromiseGrid dev guide points App Devs toward.

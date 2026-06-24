@@ -23,6 +23,7 @@ make status
 make report REPORT_ARGS='--promiser Alice'
 make inspect INSPECT_ARGS='COMMITMENT-...'
 make verify VERIFY_ARGS='COMMITMENT-...'
+make conformance VERSION=v0.1.0 SIGNER=commitment-ledger
 make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'
 make import IMPORT_ARGS='--in /tmp/bundle.json'
 ```
@@ -174,6 +175,19 @@ go run ./cmd/commitment-ledger verify bafy...
 It also tells you whether the artifact's `protocol_pcid` matches a local frozen
 protocol doc.
 
+### `conformance`
+
+```bash
+go run ./cmd/commitment-ledger conformance --signer commitment-ledger --version v0.1.0
+```
+
+Use `conformance` when you want a machine-readable signed claim about the
+protocol docs this implementation currently speaks.
+
+After emitting a new conformance artifact, update `CHANGELOG.md` so the repo
+also publishes the same claim in the human-facing shape the PromiseGrid dev
+guide points App Devs toward.
+
 ### `export`
 
 ```bash
@@ -249,6 +263,12 @@ present in the primary local identity store.
 Frozen local protocol docs. The exact document bytes determine the local
 `pCID`. Treat the artifact's `protocol_pcid` as authoritative when reading an
 artifact.
+
+### `CHANGELOG.md`
+
+Repo-level conformance publication entries naming the exact frozen spec
+doc-CIDs this implementation claims to speak. Read this together with emitted
+`implementation_conformance` artifacts rather than as a replacement for them.
 
 ## Troubleshooting
 

@@ -35,10 +35,15 @@ transport or peer protocol layered over that.
 
 ## Conformance Claim Path
 
-The `conformance` command emits a signed artifact saying which local protocol
-documents this implementation claims to speak. It is an explicit local
-statement of contract support, not a claim that upstream PromiseGrid has frozen
-those exact docs for everyone else.
+This repo now publishes conformance in two aligned ways:
+
+- the `conformance` command emits a signed artifact saying which local protocol
+  documents this implementation claims to speak
+- `CHANGELOG.md` publishes repo-level conformance entries naming the exact
+  frozen spec doc-CIDs in a human-facing audit trail
+
+Both are explicit local statements of contract support, not a claim that
+upstream PromiseGrid has frozen those exact docs for everyone else.
 
 The current local conformance payload distinguishes between:
 
@@ -48,6 +53,10 @@ The current local conformance payload distinguishes between:
 
 That split is local version-accounting, not an upstream PromiseGrid-wide
 migration contract.
+
+Until upstream PromiseGrid freezes one shared Commitment Ledger app contract,
+the repo-level `CHANGELOG.md` entries should be read as claims about these
+local frozen docs, not as claims of universal upstream app-spec adoption.
 
 ## Current Operator Reminder
 
