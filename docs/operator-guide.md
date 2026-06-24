@@ -135,11 +135,13 @@ Use `status --exchange` for import and exchange summary:
 
 - total imports
 - unique imported artifacts and source paths
+- repeated-import artifacts
+- multi-source artifacts
 - support installation count
 - trusted vs untrusted imports under the current trust policy
 - imported artifact signer state counts: active, archived, imported, or unknown
 - per-mode counts such as `import` vs `receive`
-- receipt-artifact counts, receipt signers, and how many imported artifacts have been acknowledged
+- receipt-artifact counts, receipt signers, how many imported artifacts have been acknowledged, and whether the same artifact now has multiple receipts
 
 Use `--json` when you need the repo-level or exchange-level status summary in a
 stable machine-readable form.
@@ -162,6 +164,9 @@ source path and annotated with the current trust-policy result.
 
 That summary now also includes per-source receipt counts, receipt signers, and
 locally resolved signer states for imported artifacts.
+
+It also calls out repeated imports, multi-source artifacts, and multiple-receipt
+patterns so operators can spot unusual exchange behavior quickly.
 
 Use `--json` when you need machine-readable summaries for automation.
 
@@ -338,6 +343,8 @@ Use it when you need one direct answer for:
 - whether the same artifact was imported again through another path or mode
 - which local receive receipts acknowledge that artifact
 - what signer key state and trust outcome apply across the chain
+- whether the artifact is showing repeated-import, multi-source, or
+  multiple-receipt patterns in current local state
 
 Use `--commitment COMMITMENT-...` when you want the whole chain for a
 commitment. That view summarizes the imported promise, imported evidence,

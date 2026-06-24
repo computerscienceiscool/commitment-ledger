@@ -88,9 +88,9 @@ Common targets:
 - `make check`: run formatting, tests, and a local build
 - `make cli ARGS='status'`: run arbitrary CLI commands through the standard local wrapper
 - `make scan CONFIG=config/repos.json`: scan a configured repo set
-- `make status STATUS_ARGS='--exchange --json'`: run the default repo summary or the exchange/import summary, including receipt-signer and signer-state coverage, in text or JSON form
+- `make status STATUS_ARGS='--exchange --json'`: run the default repo summary or the exchange/import summary, including repeated-import, multi-source, receipt-signer, and signer-state coverage, in text or JSON form
 - `make report REPORT_ARGS='--promiser Alice'`: run a filtered report
-- `make report REPORT_ARGS='--imports --json'`: summarize imported artifacts by source path, trust result, receipt coverage, and local signer-state resolution, with optional JSON output
+- `make report REPORT_ARGS='--imports --json'`: summarize imported artifacts by source path, trust result, repeated-import and multi-source patterns, receipt coverage, and local signer-state resolution, with optional JSON output
 - `make inspect INSPECT_ARGS='--json COMMITMENT-...'`: inspect a commitment ID, evidence ID, assessment ID, receipt ID, or artifact CID in text or JSON form
 - `make verify VERIFY_ARGS='--json COMMITMENT-...'`: verify a commitment ID, evidence ID, assessment ID, receipt ID, or artifact CID against local CAS bytes and signer material in text or JSON form
 - `make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'`: export an artifact bundle with related projection rows and support material
@@ -182,7 +182,7 @@ Observed work targets are always branch-qualified, for example
 - `import` rejects conflicting commitment, evidence, assessment, signer-support, and protocol-support state instead of silently diverging local history.
 - bundle files and `config/trust-policy.json` are parsed with strict schema checks; unknown fields and incomplete required sections now fail early.
 - `send` and `receive` add a local filesystem inbox/outbox exchange path on top of the bundle format; they are still not network transport.
-- `status --exchange` and `report --imports` now surface receive-receipt coverage, receipt signer patterns, and whether imported artifact signers resolve locally as active, archived, imported, or unknown.
+- `status --exchange` and `report --imports` now surface repeated-import patterns, multi-source artifacts, multiple-receipt coverage, receipt signer patterns, and whether imported artifact signers resolve locally as active, archived, imported, or unknown.
 - `doctor` checks local artifact index entries against CAS bytes, validates imported support files, and flags identity-lineage problems such as missing archived signer keys or artifacts signed by unknown historical keys; `doctor --json` emits a stable machine-readable summary, including recommended `repair` flags when recovery is possible, `doctor --repairable` separates repairable findings from non-repairable ones, and `doctor --strict` treats warnings as failures for CI or audit use.
 - `repair --identity-lineage` repairs the recoverable subset of lineage issues by normalizing archived identity filenames when the archived key bytes still exist locally under the wrong name.
 - `repair --json` emits machine-readable counts for each applied recovery step.

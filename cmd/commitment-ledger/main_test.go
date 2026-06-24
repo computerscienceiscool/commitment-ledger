@@ -1305,6 +1305,9 @@ func TestRunStatusExchangeAndReportImports(t *testing.T) {
 		"Receipt signers: commitment-ledger",
 		"Receipt artifacts: 1",
 		"Imported artifacts with receipts: 1",
+		"Repeated import artifacts: 0",
+		"Multi-source artifacts: 0",
+		"Multiple-receipt artifacts: 0",
 		"Mode receive: 1",
 	} {
 		if !strings.Contains(statusOut, fragment) {
@@ -1361,7 +1364,8 @@ func TestRunDoctorAndReportJSON(t *testing.T) {
 	})
 	if !strings.Contains(reportOut, strconv.Quote(bundlePath)+": {") ||
 		!strings.Contains(reportOut, "\"trusted\": false") ||
-		!strings.Contains(reportOut, "\"receipt_artifacts\": 1") {
+		!strings.Contains(reportOut, "\"receipt_artifacts\": 1") ||
+		!strings.Contains(reportOut, "\"repeated_import_artifacts\": 0") {
 		t.Fatalf("unexpected report json output:\n%s", reportOut)
 	}
 }
@@ -1697,9 +1701,28 @@ func TestRunReceiveDuplicateBundlesProducesDuplicateReceipts(t *testing.T) {
 	for _, fragment := range []string{
 		"Receipt artifacts: 2",
 		"Imported artifacts with receipts: 1",
+		"Repeated import artifacts: 1",
+		"Multi-source artifacts: 1",
+		"Multiple-receipt artifacts: 1",
+		"Top Repeated Artifact: " + bundle.Artifact.ArtifactCID + " count=2",
+		"Top Multi-Source Artifact: " + bundle.Artifact.ArtifactCID + " sources=2",
+		"Top Multi-Receipt Artifact: " + bundle.Artifact.ArtifactCID + " receipts=2",
 	} {
 		if !strings.Contains(statusOut, fragment) {
 			t.Fatalf("duplicate receive status output missing %q:\n%s", fragment, statusOut)
+		}
+	}
+
+	reportOut := captureStdout(t, func() error {
+		return runReport(root, store, []string{"--imports"})
+	})
+	for _, fragment := range []string{
+		"Repeated Artifact: " + bundle.Artifact.ArtifactCID + " Count: 2",
+		"Multi-Source Artifact: " + bundle.Artifact.ArtifactCID + " Sources: 2",
+		"Multi-Receipt Artifact: " + bundle.Artifact.ArtifactCID + " Receipts: 2",
+	} {
+		if !strings.Contains(reportOut, fragment) {
+			t.Fatalf("duplicate receive import report missing %q:\n%s", fragment, reportOut)
 		}
 	}
 }

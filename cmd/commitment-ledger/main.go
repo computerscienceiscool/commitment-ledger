@@ -3639,11 +3639,23 @@ func printExchangeStatus(root string, policy trust.Policy, imports []model.Impor
 	fmt.Printf("Unknown signer artifacts: %d\n", summary.UnknownSignerArtifacts)
 	fmt.Printf("Receipt artifacts: %d\n", summary.ReceiptArtifacts)
 	fmt.Printf("Imported artifacts with receipts: %d\n", summary.ImportedArtifactsWithReceipts)
+	fmt.Printf("Repeated import artifacts: %d\n", summary.RepeatedImportArtifacts)
+	fmt.Printf("Multi-source artifacts: %d\n", summary.MultiSourceArtifacts)
+	fmt.Printf("Multiple-receipt artifacts: %d\n", summary.MultiReceiptArtifacts)
 	if len(summary.ReceiptSigners) > 0 {
 		fmt.Printf("Receipt signers: %s\n", strings.Join(summary.ReceiptSigners, ", "))
 	}
 	for _, mode := range summary.Modes {
 		fmt.Printf("Mode %s: %d\n", mode, summary.ByMode[mode])
+	}
+	for _, item := range summary.TopRepeatedArtifacts {
+		fmt.Printf("Top Repeated Artifact: %s count=%d\n", emptyFallback(item.RelatedID, item.ArtifactCID), item.Count)
+	}
+	for _, item := range summary.TopMultiSourceArtifacts {
+		fmt.Printf("Top Multi-Source Artifact: %s sources=%d\n", emptyFallback(item.RelatedID, item.ArtifactCID), item.SourceCount)
+	}
+	for _, item := range summary.TopMultiReceiptArtifacts {
+		fmt.Printf("Top Multi-Receipt Artifact: %s receipts=%d\n", emptyFallback(item.RelatedID, item.ArtifactCID), item.ReceiptCount)
 	}
 }
 
@@ -3665,6 +3677,15 @@ func printImportReport(root string, policy trust.Policy, imports []model.ImportR
 		}
 		fmt.Printf("Last Imported At: %s\n", item.LastImportedAt)
 	}
+	for _, item := range summary.TopRepeatedArtifacts {
+		fmt.Printf("Repeated Artifact: %s Count: %d\n", emptyFallback(item.RelatedID, item.ArtifactCID), item.Count)
+	}
+	for _, item := range summary.TopMultiSourceArtifacts {
+		fmt.Printf("Multi-Source Artifact: %s Sources: %d\n", emptyFallback(item.RelatedID, item.ArtifactCID), item.SourceCount)
+	}
+	for _, item := range summary.TopMultiReceiptArtifacts {
+		fmt.Printf("Multi-Receipt Artifact: %s Receipts: %d\n", emptyFallback(item.RelatedID, item.ArtifactCID), item.ReceiptCount)
+	}
 }
 
 type importSummary struct {
@@ -3680,11 +3701,17 @@ type importSummary struct {
 	UnknownSignerArtifacts        int                            `json:"unknown_signer_artifacts"`
 	ReceiptArtifacts              int                            `json:"receipt_artifacts"`
 	ImportedArtifactsWithReceipts int                            `json:"imported_artifacts_with_receipts"`
+	RepeatedImportArtifacts       int                            `json:"repeated_import_artifacts"`
+	MultiSourceArtifacts          int                            `json:"multi_source_artifacts"`
+	MultiReceiptArtifacts         int                            `json:"multi_receipt_artifacts"`
 	ReceiptSigners                []string                       `json:"receipt_signers,omitempty"`
 	ByMode                        map[string]int                 `json:"by_mode"`
 	Modes                         []string                       `json:"modes"`
 	BySource                      map[string]importSourceSummary `json:"by_source"`
 	Sources                       []string                       `json:"sources"`
+	TopRepeatedArtifacts          []artifactPatternSummary       `json:"top_repeated_artifacts,omitempty"`
+	TopMultiSourceArtifacts       []artifactPatternSummary       `json:"top_multi_source_artifacts,omitempty"`
+	TopMultiReceiptArtifacts      []artifactPatternSummary       `json:"top_multi_receipt_artifacts,omitempty"`
 }
 
 type importSourceSummary struct {
@@ -3697,12 +3724,24 @@ type importSourceSummary struct {
 	LastImportedAt   string   `json:"last_imported_at"`
 }
 
+type artifactPatternSummary struct {
+	ArtifactCID    string   `json:"artifact_cid"`
+	RelatedID      string   `json:"related_id,omitempty"`
+	Count          int      `json:"count"`
+	ReceiptCount   int      `json:"receipt_count,omitempty"`
+	SourceCount    int      `json:"source_count,omitempty"`
+	Sources        []string `json:"sources,omitempty"`
+	ReceiptSigners []string `json:"receipt_signers,omitempty"`
+}
+
 func summarizeImports(root string, policy trust.Policy, imports []model.ImportRecord, artifacts []model.ArtifactRecord) importSummary {
 	out := importSummary{
 		ByMode:   map[string]int{},
 		BySource: map[string]importSourceSummary{},
 	}
 	artifactIndex := artifactIndexByCID(artifacts)
+	artifactImportCount := map[string]int{}
+	artifactSources := map[string]map[string]struct{}{}
 	artifactSet := map[string]struct{}{}
 	sourceSet := map[string]struct{}{}
 	modeSet := map[string]struct{}{}
@@ -3717,6 +3756,11 @@ func summarizeImports(root string, policy trust.Policy, imports []model.ImportRe
 		if _, ok := artifactSet[record.ArtifactCID]; !ok {
 			artifactSet[record.ArtifactCID] = struct{}{}
 		}
+		artifactImportCount[record.ArtifactCID]++
+		if _, ok := artifactSources[record.ArtifactCID]; !ok {
+			artifactSources[record.ArtifactCID] = map[string]struct{}{}
+		}
+		artifactSources[record.ArtifactCID][record.SourcePath] = struct{}{}
 		if _, ok := sourceSet[record.SourcePath]; !ok {
 			sourceSet[record.SourcePath] = struct{}{}
 		}
@@ -3777,6 +3821,9 @@ func summarizeImports(root string, policy trust.Policy, imports []model.ImportRe
 	for importedCID, receipts := range receiptArtifacts {
 		if len(receipts) > 0 {
 			importedWithReceipts[importedCID] = struct{}{}
+			if len(receipts) > 1 {
+				out.MultiReceiptArtifacts++
+			}
 		}
 		for _, receipt := range receipts {
 			if _, ok := receiptCounted[receipt.ArtifactCID]; ok {
@@ -3790,6 +3837,21 @@ func summarizeImports(root string, policy trust.Policy, imports []model.ImportRe
 	out.ReceiptSigners = sortedKeys(receiptSignerSet)
 	out.UniqueArtifacts = len(artifactSet)
 	out.UniqueSources = len(sourceSet)
+	for artifactCID, count := range artifactImportCount {
+		sourceCount := len(artifactSources[artifactCID])
+		receiptCount := len(receiptArtifacts[artifactCID])
+		if count > 1 {
+			out.RepeatedImportArtifacts++
+			out.TopRepeatedArtifacts = append(out.TopRepeatedArtifacts, makeArtifactPatternSummary(artifactIndex, artifactCID, count, receiptCount, sourceCount, artifactSources[artifactCID], receiptArtifacts[artifactCID]))
+		}
+		if sourceCount > 1 {
+			out.MultiSourceArtifacts++
+			out.TopMultiSourceArtifacts = append(out.TopMultiSourceArtifacts, makeArtifactPatternSummary(artifactIndex, artifactCID, count, receiptCount, sourceCount, artifactSources[artifactCID], receiptArtifacts[artifactCID]))
+		}
+		if receiptCount > 1 {
+			out.TopMultiReceiptArtifacts = append(out.TopMultiReceiptArtifacts, makeArtifactPatternSummary(artifactIndex, artifactCID, count, receiptCount, sourceCount, artifactSources[artifactCID], receiptArtifacts[artifactCID]))
+		}
+	}
 	for mode := range modeSet {
 		out.Modes = append(out.Modes, mode)
 	}
@@ -3798,7 +3860,57 @@ func summarizeImports(root string, policy trust.Policy, imports []model.ImportRe
 	}
 	sort.Strings(out.Modes)
 	sort.Strings(out.Sources)
+	sortArtifactPatternSummaries(out.TopRepeatedArtifacts)
+	sortArtifactPatternSummaries(out.TopMultiSourceArtifacts)
+	sortArtifactPatternSummaries(out.TopMultiReceiptArtifacts)
+	if len(out.TopRepeatedArtifacts) > 3 {
+		out.TopRepeatedArtifacts = out.TopRepeatedArtifacts[:3]
+	}
+	if len(out.TopMultiSourceArtifacts) > 3 {
+		out.TopMultiSourceArtifacts = out.TopMultiSourceArtifacts[:3]
+	}
+	if len(out.TopMultiReceiptArtifacts) > 3 {
+		out.TopMultiReceiptArtifacts = out.TopMultiReceiptArtifacts[:3]
+	}
 	return out
+}
+
+func makeArtifactPatternSummary(artifactIndex map[string]model.ArtifactRecord, artifactCID string, count int, receiptCount int, sourceCount int, sources map[string]struct{}, receipts []model.ArtifactRecord) artifactPatternSummary {
+	summary := artifactPatternSummary{
+		ArtifactCID:  artifactCID,
+		Count:        count,
+		ReceiptCount: receiptCount,
+		SourceCount:  sourceCount,
+		Sources:      sortedKeys(sources),
+	}
+	if artifact, ok := artifactIndex[artifactCID]; ok {
+		summary.RelatedID = artifact.RelatedID
+	}
+	if len(receipts) > 0 {
+		receiptSigners := map[string]struct{}{}
+		for _, receipt := range receipts {
+			if receipt.Signer != "" {
+				receiptSigners[receipt.Signer] = struct{}{}
+			}
+		}
+		summary.ReceiptSigners = sortedKeys(receiptSigners)
+	}
+	return summary
+}
+
+func sortArtifactPatternSummaries(items []artifactPatternSummary) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Count == items[j].Count {
+			if items[i].SourceCount == items[j].SourceCount {
+				if items[i].ReceiptCount == items[j].ReceiptCount {
+					return items[i].ArtifactCID < items[j].ArtifactCID
+				}
+				return items[i].ReceiptCount > items[j].ReceiptCount
+			}
+			return items[i].SourceCount > items[j].SourceCount
+		}
+		return items[i].Count > items[j].Count
+	})
 }
 
 func receiptArtifactsByImportedArtifact(artifacts []model.ArtifactRecord) map[string][]model.ArtifactRecord {
