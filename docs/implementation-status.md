@@ -38,6 +38,10 @@ Current local trust support is policy-based only: `verify`, `status --exchange`,
 and `report --imports` can apply a local `config/trust-policy.json`, but that is
 still operator-local trust classification rather than shared cross-peer trust.
 
+Current local integrity checking is operator-side only: `doctor` can validate
+artifact/CAS/support consistency inside one checkout, but there is still no
+shared remote repair or quorum mechanism.
+
 ## Conformance Claim Path
 
 This repo now publishes conformance in two aligned ways:

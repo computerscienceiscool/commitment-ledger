@@ -58,6 +58,7 @@ commitment-ledger export --out /tmp/bundle.json COMMITMENT-...
 commitment-ledger import --in /tmp/bundle.json
 commitment-ledger send --outbox /tmp/peer-outbox COMMITMENT-...
 commitment-ledger receive --inbox /tmp/peer-inbox --archive /tmp/peer-archive
+commitment-ledger doctor
 ```
 
 ## Make Targets
@@ -83,6 +84,7 @@ Common targets:
 - `make import IMPORT_ARGS='--in /tmp/bundle.json'`: import an artifact bundle and optionally install bundled support material
 - `make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'`: write a bundle into a peer-facing outbox directory
 - `make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'`: import all bundle files from a peer inbox directory
+- `make doctor`: verify local artifact, CAS, and imported support integrity
 - `make conformance VERSION=v0.1.0 SIGNER=commitment-ledger`: emit a local conformance claim
 - `make conformance-update VERSION=v0.1.0 SIGNER=commitment-ledger`: emit a conformance artifact and refresh the managed `CHANGELOG.md` entries
 
@@ -154,7 +156,22 @@ Observed work targets are always branch-qualified, for example
 - `verify` checks local CAS bytes, envelope/payload/proof CIDs, the signature, matching local signer identity material, and optional local trust policy over signer, protocol, and import source.
 - `export` writes a portable bundle containing the artifact index row, envelope bytes, related projection rows, and available signer/protocol support material.
 - `import` loads that bundle back into local CAS and projections, can install bundled signer/protocol support material for later `inspect` and `verify` use, and records import provenance in `data/imports.jsonl`.
+- `import` rejects conflicting commitment, evidence, assessment, signer-support, and protocol-support state instead of silently diverging local history.
 - `send` and `receive` add a local filesystem inbox/outbox exchange path on top of the bundle format; they are still not network transport.
+- `doctor` checks local artifact index entries against CAS bytes and validates imported support files.
+
+## Backup And Recovery
+
+For a reliable local backup, capture these together:
+
+- `data/`
+- `records/`
+- `config/identities/`
+- `config/imported-identities/`
+- `config/trust-policy.json` if you use it
+- `docs/protocols/` and `CHANGELOG.md`
+
+After restoring, run `make doctor` before trusting the restored state.
 
 ## Demo Docs
 

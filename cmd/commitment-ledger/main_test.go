@@ -693,6 +693,112 @@ func TestRunImportRejectsMismatchedProtocolSupport(t *testing.T) {
 	}
 }
 
+func TestRunImportRejectsConflictingCommitmentProjection(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	bundle := syntheticBundle(t, root, protocol.CommitmentPromise, []byte("external protocol doc"), "Mallory")
+	bundle.Artifact.Kind = "commitment_promise"
+	bundle.Artifact.RelatedID = "COMMITMENT-1"
+	bundle.Commitment = &model.Commitment{
+		CommitmentID: "COMMITMENT-1",
+		Promiser:     "Alice",
+		Repo:         "repo",
+		Branch:       "main",
+		Targets:      []string{"repo/main/TODO-ravud"},
+		PromiseText:  "Imported promise",
+		CreatedAt:    "2026-06-24T10:00:00-07:00",
+		DueDate:      "2026-07-01",
+		Status:       model.StatusOpen,
+		ArtifactCID:  bundle.Artifact.ArtifactCID,
+		ProtocolPCID: bundle.Artifact.ProtocolPCID,
+	}
+	bundlePath := filepath.Join(root, "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+
+	importRoot := t.TempDir()
+	copyProtocolDocs(t, importRoot)
+	importStore := ledger.NewStore(importRoot)
+	importRegistry, err := protocol.Load(importRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load import: %v", err)
+	}
+	if err := importStore.AppendCommitment(model.Commitment{
+		CommitmentID: "COMMITMENT-1",
+		Promiser:     "Alice",
+		Repo:         "repo",
+		Branch:       "main",
+		Targets:      []string{"repo/main/TODO-ravud"},
+		PromiseText:  "Local conflicting promise",
+		CreatedAt:    "2026-06-24T10:00:00-07:00",
+		DueDate:      "2026-07-01",
+		Status:       model.StatusOpen,
+	}); err != nil {
+		t.Fatalf("AppendCommitment: %v", err)
+	}
+
+	err = runImport(importRoot, importStore, importRegistry, []string{"--in", bundlePath})
+	if err == nil || !strings.Contains(err.Error(), "commitment conflict") {
+		t.Fatalf("runImport error = %v, want commitment conflict", err)
+	}
+}
+
+func TestRunDoctorDetectsMissingArtifactCAS(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(root, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+
+	now := time.Date(2026, 6, 24, 22, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(root, store, registry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan: %v", err)
+	}
+	if err := runCommit(root, store, registry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+	commitment := latestCommitment(t, store)
+	if err := os.Remove(store.CAS.Path(commitment.ArtifactCID)); err != nil {
+		t.Fatalf("remove CAS object: %v", err)
+	}
+
+	summary, err := doctorReport(root, store, registry)
+	if err != nil {
+		t.Fatalf("doctorReport: %v", err)
+	}
+	if len(summary.Errors) != 1 || !strings.Contains(summary.Errors[0], "missing CAS bytes") {
+		t.Fatalf("unexpected doctor summary: %#v", summary)
+	}
+
+	err = runDoctor(root, store, registry, nil)
+	if err == nil || !strings.Contains(err.Error(), "doctor found 1 error") {
+		t.Fatalf("runDoctor error = %v, want doctor failure", err)
+	}
+}
+
 func TestRunAssessRejectsKeptForIncompleteParentTarget(t *testing.T) {
 	root := t.TempDir()
 	copyProtocolDocs(t, root)

@@ -76,6 +76,8 @@ func main() {
 		err = runSend(root, store, registry, now, os.Args[2:])
 	case "receive":
 		err = runReceive(root, store, registry, now, os.Args[2:])
+	case "doctor":
+		err = runDoctor(root, store, registry, os.Args[2:])
 	default:
 		usage()
 		err = fmt.Errorf("unknown command %q", os.Args[1])
@@ -87,7 +89,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report|inspect|verify|export|import|send|receive> [flags]")
+	fmt.Println("usage: commitment-ledger <scan|status|commit|evidence|assess|conformance|expire|report|inspect|verify|export|import|send|receive|doctor> [flags]")
 }
 
 func runScan(root string, store *ledger.Store, registry protocol.Registry, now time.Time, args []string) error {
@@ -855,6 +857,37 @@ func runReceive(root string, store *ledger.Store, registry protocol.Registry, no
 	return nil
 }
 
+func runDoctor(root string, store *ledger.Store, registry protocol.Registry, args []string) error {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("doctor does not accept positional references")
+	}
+
+	report, err := doctorReport(root, store, registry)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Artifacts indexed: %d\n", report.Artifacts)
+	fmt.Printf("Primary identities: %d\n", report.PrimaryIdentities)
+	fmt.Printf("Imported identities: %d\n", report.ImportedIdentities)
+	fmt.Printf("Imported protocols: %d\n", report.ImportedProtocols)
+	fmt.Printf("Warnings: %d\n", len(report.Warnings))
+	fmt.Printf("Errors: %d\n", len(report.Errors))
+	for _, warning := range report.Warnings {
+		fmt.Printf("Warning: %s\n", warning)
+	}
+	for _, issue := range report.Errors {
+		fmt.Printf("Error: %s\n", issue)
+	}
+	if len(report.Errors) > 0 {
+		return fmt.Errorf("doctor found %d error(s)", len(report.Errors))
+	}
+	return nil
+}
+
 func importBundlePath(root string, store *ledger.Store, registry protocol.Registry, now time.Time, inPath string, installSupport bool, mode string, announce bool) error {
 	data, err := os.ReadFile(inPath)
 	if err != nil {
@@ -921,7 +954,11 @@ func importBundlePath(root string, store *ledger.Store, registry protocol.Regist
 	if err != nil {
 		return err
 	}
-	if !artifactExists(artifacts, bundle.Artifact.ArtifactCID) {
+	if existing, ok := artifactByCID(artifacts, bundle.Artifact.ArtifactCID); ok {
+		if !sameArtifactRecord(existing, bundle.Artifact) {
+			return fmt.Errorf("artifact conflict for %s", bundle.Artifact.ArtifactCID)
+		}
+	} else {
 		if err := store.AppendArtifact(bundle.Artifact, envelope); err != nil {
 			return err
 		}
@@ -932,7 +969,11 @@ func importBundlePath(root string, store *ledger.Store, registry protocol.Regist
 		return err
 	}
 	if bundle.Commitment != nil {
-		if current, ok := commitments[bundle.Commitment.CommitmentID]; !ok || !sameCommitment(current, *bundle.Commitment) {
+		if current, ok := commitments[bundle.Commitment.CommitmentID]; ok {
+			if !sameCommitment(current, *bundle.Commitment) {
+				return fmt.Errorf("commitment conflict for %s", bundle.Commitment.CommitmentID)
+			}
+		} else {
 			if err := store.AppendCommitment(*bundle.Commitment); err != nil {
 				return err
 			}
@@ -945,7 +986,11 @@ func importBundlePath(root string, store *ledger.Store, registry protocol.Regist
 		if err != nil {
 			return err
 		}
-		if !evidenceExists(existingEvidence, bundle.Evidence.EvidenceID) {
+		if current, ok := evidenceByID(existingEvidence, bundle.Evidence.EvidenceID); ok {
+			if !sameEvidence(current, *bundle.Evidence) {
+				return fmt.Errorf("evidence conflict for %s", bundle.Evidence.EvidenceID)
+			}
+		} else {
 			if err := store.AppendEvidence(*bundle.Evidence); err != nil {
 				return err
 			}
@@ -957,7 +1002,11 @@ func importBundlePath(root string, store *ledger.Store, registry protocol.Regist
 		if err != nil {
 			return err
 		}
-		if !assessmentExists(existingAssessments, bundle.Assessment.AssessmentID) {
+		if current, ok := assessmentByID(existingAssessments, bundle.Assessment.AssessmentID); ok {
+			if !sameAssessment(current, *bundle.Assessment) {
+				return fmt.Errorf("assessment conflict for %s", bundle.Assessment.AssessmentID)
+			}
+		} else {
 			commitmentRecord := model.Commitment{}
 			if bundle.Commitment != nil {
 				commitmentRecord = *bundle.Commitment
@@ -1080,6 +1129,15 @@ func artifactIndexByCID(artifacts []model.ArtifactRecord) map[string]model.Artif
 	return out
 }
 
+func artifactByCID(artifacts []model.ArtifactRecord, artifactCID string) (model.ArtifactRecord, bool) {
+	for _, item := range artifacts {
+		if item.ArtifactCID == artifactCID {
+			return item, true
+		}
+	}
+	return model.ArtifactRecord{}, false
+}
+
 func resolveArtifactReference(ref string, artifacts []model.ArtifactRecord, commitments map[string]model.Commitment, evidenceItems []model.Evidence, assessments []model.Assessment) (model.ArtifactRecord, error) {
 	artifactByCID := artifactIndexByCID(artifacts)
 	if artifact, ok := artifactByCID[ref]; ok {
@@ -1138,6 +1196,42 @@ func sameCommitment(a model.Commitment, b model.Commitment) bool {
 	left, _ := json.Marshal(a)
 	right, _ := json.Marshal(b)
 	return string(left) == string(right)
+}
+
+func sameArtifactRecord(a model.ArtifactRecord, b model.ArtifactRecord) bool {
+	left, _ := json.Marshal(a)
+	right, _ := json.Marshal(b)
+	return string(left) == string(right)
+}
+
+func sameEvidence(a model.Evidence, b model.Evidence) bool {
+	left, _ := json.Marshal(a)
+	right, _ := json.Marshal(b)
+	return string(left) == string(right)
+}
+
+func sameAssessment(a model.Assessment, b model.Assessment) bool {
+	left, _ := json.Marshal(a)
+	right, _ := json.Marshal(b)
+	return string(left) == string(right)
+}
+
+func evidenceByID(items []model.Evidence, evidenceID string) (model.Evidence, bool) {
+	for _, item := range items {
+		if item.EvidenceID == evidenceID {
+			return item, true
+		}
+	}
+	return model.Evidence{}, false
+}
+
+func assessmentByID(items []model.Assessment, assessmentID string) (model.Assessment, bool) {
+	for _, item := range items {
+		if item.AssessmentID == assessmentID {
+			return item, true
+		}
+	}
+	return model.Assessment{}, false
 }
 
 func buildBundle(root string, registry protocol.Registry, now time.Time, artifact model.ArtifactRecord, envelope []byte, commitments map[string]model.Commitment, evidenceItems []model.Evidence, assessments []model.Assessment) (exchange.Bundle, error) {
@@ -1235,6 +1329,13 @@ func installProtocolSupport(root string, support exchange.ProtocolSupport) error
 	if err := os.MkdirAll(filepath.Dir(docPath), 0o755); err != nil {
 		return fmt.Errorf("mkdir imported protocol dir: %w", err)
 	}
+	if existing, err := os.ReadFile(docPath); err == nil {
+		if string(existing) != string(data) {
+			return fmt.Errorf("protocol support conflict for %s", support.ProtocolPCID)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read imported protocol doc %q: %w", docPath, err)
+	}
 	if err := os.WriteFile(docPath, data, 0o644); err != nil {
 		return fmt.Errorf("write imported protocol doc: %w", err)
 	}
@@ -1242,6 +1343,13 @@ func installProtocolSupport(root string, support exchange.ProtocolSupport) error
 	meta, err := json.MarshalIndent(support, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal protocol support: %w", err)
+	}
+	if existing, err := os.ReadFile(metaPath); err == nil {
+		if string(existing) != string(meta) {
+			return fmt.Errorf("protocol support metadata conflict for %s", support.ProtocolPCID)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read imported protocol metadata %q: %w", metaPath, err)
 	}
 	if err := os.WriteFile(metaPath, meta, 0o644); err != nil {
 		return fmt.Errorf("write imported protocol metadata: %w", err)
@@ -1261,6 +1369,13 @@ func installSignerSupport(root string, support exchange.SignerSupport) error {
 	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal signer support: %w", err)
+	}
+	if existing, err := os.ReadFile(path); err == nil {
+		if string(existing) != string(payload) {
+			return fmt.Errorf("signer support conflict for %s", support.Name)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read imported identity %q: %w", path, err)
 	}
 	if err := os.WriteFile(path, payload, 0o644); err != nil {
 		return fmt.Errorf("write imported identity: %w", err)
@@ -1714,6 +1829,129 @@ func stringSliceContains(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+type doctorSummary struct {
+	Artifacts          int
+	PrimaryIdentities  int
+	ImportedIdentities int
+	ImportedProtocols  int
+	Warnings           []string
+	Errors             []string
+}
+
+func doctorReport(root string, store *ledger.Store, registry protocol.Registry) (doctorSummary, error) {
+	summary := doctorSummary{}
+	artifacts, err := store.LoadArtifacts()
+	if err != nil {
+		return summary, err
+	}
+	summary.Artifacts = len(artifacts)
+	for _, artifact := range artifacts {
+		envelope, err := store.CAS.Get(artifact.ArtifactCID)
+		if err != nil {
+			summary.Errors = append(summary.Errors, fmt.Sprintf("artifact %s missing CAS bytes: %v", artifact.ArtifactCID, err))
+			continue
+		}
+		decoded, err := grid.DecodeEnvelope(envelope)
+		if err != nil {
+			summary.Errors = append(summary.Errors, fmt.Sprintf("artifact %s decode failed: %v", artifact.ArtifactCID, err))
+			continue
+		}
+		if decoded.EnvelopeCID != artifact.ArtifactCID {
+			summary.Errors = append(summary.Errors, fmt.Sprintf("artifact %s envelope CID mismatch", artifact.ArtifactCID))
+		}
+		if decoded.ProtocolPCID != artifact.ProtocolPCID {
+			summary.Errors = append(summary.Errors, fmt.Sprintf("artifact %s protocol pCID mismatch", artifact.ArtifactCID))
+		}
+		if decoded.PayloadCID != artifact.PayloadCID {
+			summary.Errors = append(summary.Errors, fmt.Sprintf("artifact %s payload CID mismatch", artifact.ArtifactCID))
+		}
+		if decoded.ProofCID != artifact.ProofCID {
+			summary.Errors = append(summary.Errors, fmt.Sprintf("artifact %s proof CID mismatch", artifact.ArtifactCID))
+		}
+	}
+	if err := doctorIdentityDir(root, filepath.Join(root, "config", "identities"), true, &summary); err != nil {
+		return summary, err
+	}
+	if err := doctorIdentityDir(root, filepath.Join(root, "config", "imported-identities"), false, &summary); err != nil {
+		return summary, err
+	}
+	if err := doctorImportedProtocols(root, &summary); err != nil {
+		return summary, err
+	}
+	if _, err := os.Stat(changelog.Path(root)); err != nil {
+		if os.IsNotExist(err) {
+			summary.Warnings = append(summary.Warnings, "CHANGELOG.md not found")
+		} else {
+			return summary, err
+		}
+	}
+	_ = registry
+	return summary, nil
+}
+
+func doctorIdentityDir(root string, dir string, primary bool, summary *doctorSummary) error {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read identity dir %q: %w", dir, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), ".json")
+		if primary {
+			if _, _, _, err := identity.Load(root, name); err != nil {
+				summary.Errors = append(summary.Errors, fmt.Sprintf("primary identity %s invalid: %v", name, err))
+				continue
+			}
+			summary.PrimaryIdentities++
+			continue
+		}
+		if _, _, err := identity.LoadVerifier(root, name); err != nil {
+			summary.Errors = append(summary.Errors, fmt.Sprintf("imported identity %s invalid: %v", name, err))
+			continue
+		}
+		summary.ImportedIdentities++
+	}
+	return nil
+}
+
+func doctorImportedProtocols(root string, summary *doctorSummary) error {
+	dir := filepath.Join(root, "data", "imported-protocols")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read imported protocol dir %q: %w", dir, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		pcid := strings.TrimSuffix(entry.Name(), ".json")
+		support, err := loadImportedProtocolSupport(root, pcid)
+		if err != nil {
+			summary.Errors = append(summary.Errors, fmt.Sprintf("imported protocol %s metadata invalid: %v", pcid, err))
+			continue
+		}
+		data, err := os.ReadFile(importedProtocolDocPath(root, pcid))
+		if err != nil {
+			summary.Errors = append(summary.Errors, fmt.Sprintf("imported protocol %s doc missing: %v", pcid, err))
+			continue
+		}
+		if got := protocol.SupportPCID(data); got != support.ProtocolPCID {
+			summary.Errors = append(summary.Errors, fmt.Sprintf("imported protocol %s pCID mismatch", pcid))
+			continue
+		}
+		summary.ImportedProtocols++
+	}
+	return nil
 }
 
 func emitCommitmentArtifact(root string, store *ledger.Store, registry protocol.Registry, item model.Commitment, promisee string) (model.Commitment, error) {

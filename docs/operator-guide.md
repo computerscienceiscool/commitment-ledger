@@ -31,6 +31,7 @@ make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'
 make import IMPORT_ARGS='--in /tmp/bundle.json'
 make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'
 make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'
+make doctor
 ```
 
 For the seeded demo workflow:
@@ -280,6 +281,28 @@ go run ./cmd/commitment-ledger receive --inbox /tmp/peer-inbox --archive /tmp/pe
 `receive` scans a local inbox directory for bundle files, imports them, and can
 optionally archive the processed files after successful import.
 
+`import` and `receive` now fail fast on conflicts:
+
+- same artifact CID with different indexed metadata
+- same commitment/evidence/assessment ID with different projected content
+- same imported signer or protocol support path with different bytes
+
+### `doctor`
+
+```bash
+go run ./cmd/commitment-ledger doctor
+```
+
+`doctor` checks:
+
+- artifact index rows versus CAS presence and decodability
+- indexed protocol, payload, and proof CIDs versus decoded envelope bytes
+- primary and imported identity files can be parsed
+- imported protocol metadata matches imported protocol document bytes
+
+Treat a nonzero `doctor` result as a real local integrity problem until you
+understand it.
+
 ## Local State Layout
 
 ### `data/`
@@ -334,6 +357,25 @@ artifact.
 Repo-level conformance publication entries naming the exact frozen spec
 doc-CIDs this implementation claims to speak. Read this together with emitted
 `implementation_conformance` artifacts rather than as a replacement for them.
+
+## Backup And Recovery
+
+For a local backup, preserve these paths together:
+
+- `data/`
+- `records/`
+- `config/identities/`
+- `config/imported-identities/`
+- `config/trust-policy.json` if present
+- `docs/protocols/`
+- `CHANGELOG.md`
+
+Recommended recovery flow:
+
+1. Restore those paths together into a fresh checkout.
+2. Run `make doctor`.
+3. Run `make status` and `make status STATUS_ARGS='--exchange'`.
+4. Use `inspect` or `verify` on a few representative artifacts before resuming normal operation.
 
 ## Troubleshooting
 
@@ -436,6 +478,20 @@ Cause:
 What to do:
 
 - inspect the artifact and signer identity carefully
+
+### `import` or `receive` says `... conflict ...`
+
+Cause:
+
+- the bundle is trying to introduce a local record or support file that already
+  exists with different content
+
+What to do:
+
+- inspect the existing local artifact or record first
+- inspect the incoming bundle in another checkout if needed
+- decide which side is authoritative before retrying
+- do not delete local state casually just to make the import pass
 - treat this as a real trust/integrity problem, not a display issue
 - see `docs/trust-and-verification.md` for the trust model limits
 
