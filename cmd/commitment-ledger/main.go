@@ -225,6 +225,7 @@ func removedWorkItems(repo string, branch string, commit string, now time.Time, 
 func runStatus(root string, store *ledger.Store, args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	exchangeOnly := fs.Bool("exchange", false, "show exchange and import summary instead of repo work summary")
+	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -241,6 +242,9 @@ func runStatus(root string, store *ledger.Store, args []string) error {
 		if err != nil {
 			return err
 		}
+		if *jsonOut {
+			return printJSON(summarizeImports(policy, imports, artifacts))
+		}
 		printExchangeStatus(policy, imports, artifacts)
 		return nil
 	}
@@ -252,7 +256,11 @@ func runStatus(root string, store *ledger.Store, args []string) error {
 	if err != nil {
 		return err
 	}
-	for _, summary := range report.RepoSummaries(workItems, commitments) {
+	summaries := report.RepoSummaries(workItems, commitments)
+	if *jsonOut {
+		return printJSON(summaries)
+	}
+	for _, summary := range summaries {
 		fmt.Printf("Repo: %s\n", summary.Repo)
 		fmt.Printf("Branch: %s\n", summary.Branch)
 		fmt.Printf("Open TODOs: %d\n", summary.OpenTODOs)
@@ -904,6 +912,7 @@ func runReceive(root string, store *ledger.Store, registry protocol.Registry, no
 func runDoctor(root string, store *ledger.Store, registry protocol.Registry, args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	jsonOut := fs.Bool("json", false, "emit JSON")
+	repairableOnly := fs.Bool("repairable", false, "show repairable findings and hints")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -924,17 +933,42 @@ func runDoctor(root string, store *ledger.Store, registry protocol.Registry, arg
 		}
 		return nil
 	}
+	if *repairableOnly {
+		fmt.Printf("Repairable Errors: %d\n", len(report.RepairableErrors))
+		for _, issue := range report.RepairableErrors {
+			fmt.Printf("Repairable: %s\n", issue)
+		}
+		if len(report.RepairHints) == 0 {
+			fmt.Println("Repair Hints: none")
+		} else {
+			for _, hint := range report.RepairHints {
+				fmt.Printf("Repair Hint: %s\n", hint)
+			}
+		}
+		fmt.Printf("Non-repairable Errors: %d\n", len(report.NonRepairableErrors))
+		for _, issue := range report.NonRepairableErrors {
+			fmt.Printf("Non-repairable: %s\n", issue)
+		}
+		if len(report.Errors) > 0 {
+			return fmt.Errorf("doctor found %d error(s)", len(report.Errors))
+		}
+		return nil
+	}
 	fmt.Printf("Artifacts indexed: %d\n", report.Artifacts)
 	fmt.Printf("Primary identities: %d\n", report.PrimaryIdentities)
 	fmt.Printf("Imported identities: %d\n", report.ImportedIdentities)
 	fmt.Printf("Imported protocols: %d\n", report.ImportedProtocols)
 	fmt.Printf("Warnings: %d\n", len(report.Warnings))
 	fmt.Printf("Errors: %d\n", len(report.Errors))
+	fmt.Printf("Repairable errors: %d\n", len(report.RepairableErrors))
 	for _, warning := range report.Warnings {
 		fmt.Printf("Warning: %s\n", warning)
 	}
 	for _, issue := range report.Errors {
 		fmt.Printf("Error: %s\n", issue)
+	}
+	for _, hint := range report.RepairHints {
+		fmt.Printf("Repair Hint: %s\n", hint)
 	}
 	if len(report.Errors) > 0 {
 		return fmt.Errorf("doctor found %d error(s)", len(report.Errors))
@@ -2380,18 +2414,24 @@ func printJSON(v any) error {
 }
 
 type doctorSummary struct {
-	Artifacts          int      `json:"artifacts"`
-	PrimaryIdentities  int      `json:"primary_identities"`
-	ImportedIdentities int      `json:"imported_identities"`
-	ImportedProtocols  int      `json:"imported_protocols"`
-	Warnings           []string `json:"warnings"`
-	Errors             []string `json:"errors"`
+	Artifacts           int      `json:"artifacts"`
+	PrimaryIdentities   int      `json:"primary_identities"`
+	ImportedIdentities  int      `json:"imported_identities"`
+	ImportedProtocols   int      `json:"imported_protocols"`
+	Warnings            []string `json:"warnings"`
+	Errors              []string `json:"errors"`
+	RepairableErrors    []string `json:"repairable_errors"`
+	NonRepairableErrors []string `json:"non_repairable_errors"`
+	RepairHints         []string `json:"repair_hints"`
 }
 
 func doctorReport(root string, store *ledger.Store, registry protocol.Registry) (doctorSummary, error) {
 	summary := doctorSummary{
-		Warnings: []string{},
-		Errors:   []string{},
+		Warnings:            []string{},
+		Errors:              []string{},
+		RepairableErrors:    []string{},
+		NonRepairableErrors: []string{},
+		RepairHints:         []string{},
 	}
 	artifacts, err := store.LoadArtifacts()
 	if err != nil {
@@ -2401,25 +2441,31 @@ func doctorReport(root string, store *ledger.Store, registry protocol.Registry) 
 	for _, artifact := range artifacts {
 		envelope, err := store.CAS.Get(artifact.ArtifactCID)
 		if err != nil {
-			summary.Errors = append(summary.Errors, fmt.Sprintf("artifact %s missing CAS bytes: %v", artifact.ArtifactCID, err))
+			message := fmt.Sprintf("artifact %s missing CAS bytes: %v", artifact.ArtifactCID, err)
+			repairable := artifactImported(artifact.ArtifactCID, store)
+			hint := ""
+			if repairable {
+				hint = "run repair --import-artifacts to restore missing imported artifact envelopes from saved bundle paths"
+			}
+			addDoctorError(&summary, message, repairable, hint)
 			continue
 		}
 		decoded, err := grid.DecodeEnvelope(envelope)
 		if err != nil {
-			summary.Errors = append(summary.Errors, fmt.Sprintf("artifact %s decode failed: %v", artifact.ArtifactCID, err))
+			addDoctorError(&summary, fmt.Sprintf("artifact %s decode failed: %v", artifact.ArtifactCID, err), false, "")
 			continue
 		}
 		if decoded.EnvelopeCID != artifact.ArtifactCID {
-			summary.Errors = append(summary.Errors, fmt.Sprintf("artifact %s envelope CID mismatch", artifact.ArtifactCID))
+			addDoctorError(&summary, fmt.Sprintf("artifact %s envelope CID mismatch", artifact.ArtifactCID), false, "")
 		}
 		if decoded.ProtocolPCID != artifact.ProtocolPCID {
-			summary.Errors = append(summary.Errors, fmt.Sprintf("artifact %s protocol pCID mismatch", artifact.ArtifactCID))
+			addDoctorError(&summary, fmt.Sprintf("artifact %s protocol pCID mismatch", artifact.ArtifactCID), false, "")
 		}
 		if decoded.PayloadCID != artifact.PayloadCID {
-			summary.Errors = append(summary.Errors, fmt.Sprintf("artifact %s payload CID mismatch", artifact.ArtifactCID))
+			addDoctorError(&summary, fmt.Sprintf("artifact %s payload CID mismatch", artifact.ArtifactCID), false, "")
 		}
 		if decoded.ProofCID != artifact.ProofCID {
-			summary.Errors = append(summary.Errors, fmt.Sprintf("artifact %s proof CID mismatch", artifact.ArtifactCID))
+			addDoctorError(&summary, fmt.Sprintf("artifact %s proof CID mismatch", artifact.ArtifactCID), false, "")
 		}
 	}
 	if err := doctorIdentityDir(root, filepath.Join(root, "config", "identities"), true, &summary); err != nil {
@@ -2442,6 +2488,31 @@ func doctorReport(root string, store *ledger.Store, registry protocol.Registry) 
 	return summary, nil
 }
 
+func addDoctorError(summary *doctorSummary, message string, repairable bool, hint string) {
+	summary.Errors = append(summary.Errors, message)
+	if repairable {
+		summary.RepairableErrors = append(summary.RepairableErrors, message)
+	} else {
+		summary.NonRepairableErrors = append(summary.NonRepairableErrors, message)
+	}
+	if hint != "" && !stringSliceContains(summary.RepairHints, hint) {
+		summary.RepairHints = append(summary.RepairHints, hint)
+	}
+}
+
+func artifactImported(artifactCID string, store *ledger.Store) bool {
+	imports, err := store.LoadImports()
+	if err != nil {
+		return false
+	}
+	for _, record := range imports {
+		if record.ArtifactCID == artifactCID {
+			return true
+		}
+	}
+	return false
+}
+
 func doctorIdentityDir(root string, dir string, primary bool, summary *doctorSummary) error {
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
@@ -2457,14 +2528,14 @@ func doctorIdentityDir(root string, dir string, primary bool, summary *doctorSum
 		name := strings.TrimSuffix(entry.Name(), ".json")
 		if primary {
 			if _, _, _, err := identity.Load(root, name); err != nil {
-				summary.Errors = append(summary.Errors, fmt.Sprintf("primary identity %s invalid: %v", name, err))
+				addDoctorError(summary, fmt.Sprintf("primary identity %s invalid: %v", name, err), false, "")
 				continue
 			}
 			summary.PrimaryIdentities++
 			continue
 		}
 		if _, _, err := identity.LoadVerifier(root, name); err != nil {
-			summary.Errors = append(summary.Errors, fmt.Sprintf("imported identity %s invalid: %v", name, err))
+			addDoctorError(summary, fmt.Sprintf("imported identity %s invalid: %v", name, err), false, "")
 			continue
 		}
 		summary.ImportedIdentities++
@@ -2488,16 +2559,16 @@ func doctorImportedProtocols(root string, summary *doctorSummary) error {
 		pcid := strings.TrimSuffix(entry.Name(), ".json")
 		support, err := loadImportedProtocolSupport(root, pcid)
 		if err != nil {
-			summary.Errors = append(summary.Errors, fmt.Sprintf("imported protocol %s metadata invalid: %v", pcid, err))
+			addDoctorError(summary, fmt.Sprintf("imported protocol %s metadata invalid: %v", pcid, err), false, "")
 			continue
 		}
 		data, err := os.ReadFile(importedProtocolDocPath(root, pcid))
 		if err != nil {
-			summary.Errors = append(summary.Errors, fmt.Sprintf("imported protocol %s doc missing: %v", pcid, err))
+			addDoctorError(summary, fmt.Sprintf("imported protocol %s doc missing: %v", pcid, err), false, "")
 			continue
 		}
 		if got := protocol.SupportPCID(data); got != support.ProtocolPCID {
-			summary.Errors = append(summary.Errors, fmt.Sprintf("imported protocol %s pCID mismatch", pcid))
+			addDoctorError(summary, fmt.Sprintf("imported protocol %s pCID mismatch", pcid), false, "")
 			continue
 		}
 		summary.ImportedProtocols++

@@ -1346,7 +1346,9 @@ func TestRunDoctorAndReportJSON(t *testing.T) {
 	doctorOut := captureStdout(t, func() error {
 		return runDoctor(root, store, registry, []string{"--json"})
 	})
-	if !strings.Contains(doctorOut, "\"artifacts\": 2") || !strings.Contains(doctorOut, "\"errors\": []") {
+	if !strings.Contains(doctorOut, "\"artifacts\": 2") ||
+		!strings.Contains(doctorOut, "\"errors\": []") ||
+		!strings.Contains(doctorOut, "\"repairable_errors\": []") {
 		t.Fatalf("unexpected doctor json output:\n%s", doctorOut)
 	}
 
@@ -1425,6 +1427,89 @@ func TestRunInspectAndVerifyJSON(t *testing.T) {
 		if !strings.Contains(verifyOut, fragment) {
 			t.Fatalf("verify json output missing %q:\n%s", fragment, verifyOut)
 		}
+	}
+}
+
+func TestRunStatusJSON(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(root, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+	now := time.Date(2026, 6, 24, 23, 30, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(root, store, registry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan: %v", err)
+	}
+
+	statusOut := captureStdout(t, func() error {
+		return runStatus(root, store, []string{"--json"})
+	})
+	for _, fragment := range []string{
+		"\"repo\": \"fixture\"",
+		"\"branch\": \"main\"",
+		"\"open_todos\": 1",
+	} {
+		if !strings.Contains(statusOut, fragment) {
+			t.Fatalf("status json output missing %q:\n%s", fragment, statusOut)
+		}
+	}
+}
+
+func TestRunDoctorRepairableHintsImportedArtifactCAS(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	inbox := filepath.Join(root, "peer-inbox")
+	bundlePath := filepath.Join(inbox, "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+	now := time.Date(2026, 6, 24, 23, 45, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runImportAt(root, store, registry, now, []string{"--in", bundlePath}); err != nil {
+		t.Fatalf("runImportAt: %v", err)
+	}
+	if err := os.Remove(store.CAS.Path(bundle.Artifact.ArtifactCID)); err != nil {
+		t.Fatalf("remove imported artifact CAS: %v", err)
+	}
+
+	doctorOut, doctorErr := captureStdoutWithError(t, func() error {
+		return runDoctor(root, store, registry, []string{"--repairable"})
+	})
+	if doctorErr == nil || !strings.Contains(doctorErr.Error(), "doctor found 1 error") {
+		t.Fatalf("runDoctor --repairable error = %v, want doctor failure", doctorErr)
+	}
+	if !strings.Contains(doctorOut, "Repairable Errors: 1") ||
+		!strings.Contains(doctorOut, "run repair --import-artifacts") ||
+		!strings.Contains(doctorOut, "Non-repairable Errors: 0") {
+		t.Fatalf("unexpected doctor repairable output:\n%s", doctorOut)
+	}
+
+	report, err := doctorReport(root, store, registry)
+	if err != nil {
+		t.Fatalf("doctorReport: %v", err)
+	}
+	if len(report.RepairableErrors) != 1 || len(report.NonRepairableErrors) != 0 || len(report.RepairHints) != 1 {
+		t.Fatalf("unexpected doctor report classification: %#v", report)
 	}
 }
 
@@ -1710,6 +1795,15 @@ func runGit(t *testing.T, repoPath string, args ...string) {
 
 func captureStdout(t *testing.T, fn func() error) string {
 	t.Helper()
+	out, runErr := captureStdoutWithError(t, fn)
+	if runErr != nil {
+		t.Fatalf("captured function error: %v", runErr)
+	}
+	return out
+}
+
+func captureStdoutWithError(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
 	original := os.Stdout
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -1721,11 +1815,8 @@ func captureStdout(t *testing.T, fn func() error) string {
 	os.Stdout = original
 	data, readErr := io.ReadAll(r)
 	_ = r.Close()
-	if runErr != nil {
-		t.Fatalf("captured function error: %v", runErr)
-	}
 	if readErr != nil {
 		t.Fatalf("read captured stdout: %v", readErr)
 	}
-	return string(data)
+	return string(data), runErr
 }

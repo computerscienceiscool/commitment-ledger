@@ -20,7 +20,7 @@ make help
 make test
 make scan CONFIG=config/repos.json
 make status
-make status STATUS_ARGS='--exchange'
+make status STATUS_ARGS='--exchange --json'
 make report REPORT_ARGS='--promiser Alice'
 make report REPORT_ARGS='--imports --json'
 make inspect INSPECT_ARGS='--json COMMITMENT-...'
@@ -31,7 +31,7 @@ make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'
 make import IMPORT_ARGS='--in /tmp/bundle.json'
 make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'
 make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'
-make doctor DOCTOR_ARGS='--json'
+make doctor DOCTOR_ARGS='--repairable'
 make repair REPAIR_ARGS='--records --protocol-cas --import-artifacts'
 make identity IDENTITY_ARGS='list --json'
 ```
@@ -118,6 +118,8 @@ Important current rules:
 ```bash
 go run ./cmd/commitment-ledger status
 go run ./cmd/commitment-ledger status --exchange
+go run ./cmd/commitment-ledger status --json
+go run ./cmd/commitment-ledger status --exchange --json
 ```
 
 Use this for repo-level operational summary:
@@ -135,6 +137,9 @@ Use `status --exchange` for import and exchange summary:
 - trusted vs untrusted imports under the current trust policy
 - per-mode counts such as `import` vs `receive`
 - receipt-artifact counts and how many imported artifacts have been acknowledged
+
+Use `--json` when you need the repo-level or exchange-level status summary in a
+stable machine-readable form.
 
 ### `report`
 
@@ -321,6 +326,7 @@ Bundle files are also parsed strictly:
 ```bash
 go run ./cmd/commitment-ledger doctor
 go run ./cmd/commitment-ledger doctor --json
+go run ./cmd/commitment-ledger doctor --repairable
 ```
 
 `doctor` checks:
@@ -332,6 +338,11 @@ go run ./cmd/commitment-ledger doctor --json
 
 Treat a nonzero `doctor` result as a real local integrity problem until you
 understand it.
+
+Use `--repairable` when you want the current findings split into:
+
+- issues the existing `repair` command may be able to address
+- issues that still need operator investigation or manual recovery
 
 ### `repair`
 
