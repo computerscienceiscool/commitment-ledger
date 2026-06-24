@@ -13,6 +13,13 @@ Retrospective note:
 - The retrospective checklist at the end of this file records the major later
   work that was completed but not tracked here in the intended way.
 
+- [ ] TODO-ramuk - Add imported support backup and restore (`TODO/TODO-ramuk-add-imported-support-backup-and-restore.md`)
+- [ ] TODO-fesob - Add bundle-path loss recovery (`TODO/TODO-fesob-add-bundle-path-loss-recovery.md`)
+- [ ] TODO-lutav - Add richer exchange analytics (`TODO/TODO-lutav-add-richer-exchange-analytics.md`)
+- [ ] TODO-pivok - Add machine-readable contract documentation and versioning (`TODO/TODO-pivok-add-machine-readable-contract-documentation-and-versioning.md`)
+- [ ] TODO-mesad - Update demo and operator videos (`TODO/TODO-mesad-update-demo-and-operator-videos.md`)
+- [ ] TODO-qatig - Update the site (`TODO/TODO-qatig-update-the-site.md`)
+- [ ] TODO-dorun - Update documentation (`TODO/TODO-dorun-update-documentation.md`)
 - [x] TODO-zarek - Add commitment-level exchange reconciliation (`TODO/TODO-zarek-add-commitment-level-exchange-reconciliation.md`)
 - [x] TODO-nopud - Harden identity restore conflict and partial-restore behavior (`TODO/TODO-nopud-harden-identity-restore-conflict-and-partial-restore-behavior.md`)
 - [x] TODO-garuk - Add negative-path exchange fixtures (`TODO/TODO-garuk-add-negative-path-exchange-fixtures.md`)
