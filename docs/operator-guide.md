@@ -1,0 +1,261 @@
+# Operator Guide
+
+## Purpose
+
+This file is the practical runbook for operating Commitment Ledger locally.
+
+Use it when you need to:
+
+- run the normal scan -> commit -> evidence -> assess flow
+- inspect what the ledger believes about a commitment or artifact
+- understand where local state lives
+- diagnose common operator errors
+
+## Fast Path
+
+For routine local work from the repo root:
+
+```bash
+make help
+make test
+make scan CONFIG=config/repos.json
+make status
+make report REPORT_ARGS='--promiser Alice'
+make inspect INSPECT_ARGS='COMMITMENT-...'
+```
+
+For the seeded demo workflow:
+
+```bash
+make demo-setup
+make demo-scan
+make demo-status
+make demo-report REPORT_ARGS='--promiser Alice'
+```
+
+## Core Commands
+
+### `scan`
+
+```bash
+go run ./cmd/commitment-ledger scan --config config/repos.json
+```
+
+What it does:
+
+- observes each enabled local git repo
+- verifies the checked-out branch matches config
+- parses TODO work and subtasks
+- retires removed targets from the latest projected work state
+- derives local scan evidence for open or expired-unassessed commitments
+
+Use `scan` again after the source repo changes. The ledger does not infer new
+repo state until you rescan.
+
+### `commit`
+
+```bash
+go run ./cmd/commitment-ledger commit \
+  --promiser Alice \
+  --repo repo \
+  --branch main \
+  --target repo/main/TODO-ravud/1 \
+  --due 2026-07-01 \
+  --promise "I promise to complete subtask 1."
+```
+
+What it requires:
+
+- a previously scanned target
+- repo and branch matching that target
+- a valid due date
+- non-empty promise text
+
+### `evidence`
+
+```bash
+go run ./cmd/commitment-ledger evidence \
+  --commitment COMMITMENT-... \
+  --type manual_note \
+  --notes "Observed blocker"
+```
+
+Manual evidence must stay within the commitment's repo, branch, and promised
+target scope.
+
+### `assess`
+
+```bash
+go run ./cmd/commitment-ledger assess \
+  --commitment COMMITMENT-... \
+  --assessor Alice \
+  --status kept \
+  --basis EVIDENCE-... \
+  --notes "Completed before the due date."
+```
+
+Important current rules:
+
+- already-finalized commitments cannot be silently reassessed
+- basis references must resolve to evidence for the same commitment
+- `kept` is checked against the latest scanned work state
+- for parent TODO targets, all discovered subtasks must be complete
+
+### `status`
+
+```bash
+go run ./cmd/commitment-ledger status
+```
+
+Use this for repo-level operational summary:
+
+- open TODOs
+- open subtasks
+- active commitments
+- terminal commitment outcomes by repo/branch
+
+### `report`
+
+```bash
+go run ./cmd/commitment-ledger report --promiser Alice
+go run ./cmd/commitment-ledger report --repo alice-demo --branch main
+go run ./cmd/commitment-ledger report --work alice-demo/main/TODO-ravud
+```
+
+Use `report` when you want filtered summaries by promiser, repo, or work
+target.
+
+### `inspect`
+
+```bash
+go run ./cmd/commitment-ledger inspect COMMITMENT-...
+go run ./cmd/commitment-ledger inspect EVIDENCE-...
+go run ./cmd/commitment-ledger inspect ASSESSMENT-...
+go run ./cmd/commitment-ledger inspect bafy...
+```
+
+`inspect` resolves:
+
+- commitment IDs
+- evidence IDs
+- assessment IDs
+- artifact CIDs
+
+It prints:
+
+- artifact CID
+- protocol name and `pCID`
+- local frozen protocol doc path
+- signer and signer key ID
+- payload and proof CIDs
+- related local record path when one exists
+- current projected status or evidence details
+
+## Local State Layout
+
+### `data/`
+
+Append-only machine-readable projections:
+
+- `data/work_items.jsonl`: latest-known and historical work observations
+- `data/commitments.jsonl`: commitment projections
+- `data/evidence.jsonl`: evidence projections
+- `data/assessments.jsonl`: assessment projections
+- `data/artifacts.jsonl`: local artifact index rows
+- `data/snapshots.jsonl`: per-scan repo summaries
+
+### `data/cas/`
+
+Raw content-addressed bytes for emitted artifacts and frozen protocol docs.
+
+### `records/`
+
+Human-readable Markdown projections:
+
+- `records/commitments/`
+- `records/assessments/`
+
+Evidence does not currently get its own standalone Markdown record.
+
+### `docs/protocols/`
+
+Frozen local protocol docs. The exact document bytes determine the local
+`pCID`. Treat the artifact's `protocol_pcid` as authoritative when reading an
+artifact.
+
+## Troubleshooting
+
+### `scan` says the repo is on the wrong branch
+
+Cause:
+
+- the repo's current checked-out branch does not match `config/repos.json`
+
+What to do:
+
+- switch the repo to the configured branch
+- or update the repo config if the intended observed branch changed
+
+### `commit` says `unknown target`
+
+Cause:
+
+- the target has not been scanned yet
+- or the target disappeared from the latest work state
+
+What to do:
+
+- run `scan` first
+- use `report --work ...` or inspect `data/work_items.jsonl` to confirm the
+  current target exists
+
+### `assess` says `unknown basis reference`
+
+Cause:
+
+- the supplied `--basis` value is neither a known evidence ID nor an evidence
+  artifact CID
+
+What to do:
+
+- inspect the intended evidence with `inspect EVIDENCE-...`
+- use the evidence ID or the emitted artifact CID exactly
+
+### `assess` says basis evidence belongs to another commitment
+
+Cause:
+
+- the referenced evidence exists, but it was recorded for a different
+  commitment
+
+What to do:
+
+- inspect both the evidence and the commitment
+- choose basis evidence from the same commitment only
+
+### `assess --status kept` is rejected
+
+Common causes:
+
+- the promised subtask is not complete yet
+- the promised parent TODO still has incomplete discovered subtasks
+- the target no longer exists in the latest scanned state
+
+What to do:
+
+- update the source repo
+- commit those TODO changes in the source repo
+- run `scan` again
+- inspect the commitment and relevant evidence before retrying `assess`
+
+### A TODO disappeared after scan
+
+This is now expected behavior when the source repo removes or renames the
+target. The latest projected work state retires missing targets on the next
+scan instead of keeping them alive forever.
+
+### `inspect` shows no record path for evidence
+
+This is expected today. Evidence is projected into `data/evidence.jsonl` and
+the associated commitment Markdown record, but not into a standalone
+`records/evidence/` tree yet.

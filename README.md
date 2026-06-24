@@ -125,6 +125,7 @@ Observed work targets are always branch-qualified, for example
 
 - `docs/demo-plan.md` lays out a real-repo demo using Alice, Bob, Dave, and Mallory roles.
 - `docs/demo-script.md` is the spoken walkthrough with commands, files, and demo narration.
+- `docs/operator-guide.md` is the practical runbook for local operation, inspection, and troubleshooting.
 
 ## Version Notes
 

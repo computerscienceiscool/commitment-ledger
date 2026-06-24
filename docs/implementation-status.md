@@ -51,3 +51,11 @@ When inspecting `data/artifacts.jsonl`, remember that rows there are local
 index entries over raw CAS objects. They are documented field-by-field in
 `docs/promisegrid-app-design.md` and should not be mistaken for the protocol
 artifact bytes themselves.
+
+For day-to-day use, prefer the repo's operator-facing commands and guide
+instead of reading projection files directly first:
+
+- `status` for repo-level summary
+- `report` for filtered views
+- `inspect` for artifact and record lookup
+- `docs/operator-guide.md` for normal workflow and troubleshooting

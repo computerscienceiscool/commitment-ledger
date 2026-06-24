@@ -2,6 +2,7 @@
 
 This list is sorted by priority. TODO handles are stable proquint IDs.
 
+- [x] TODO-risuk - Add operator guide and inspect lifecycle coverage (`TODO/TODO-risuk-add-operator-guide-and-inspect-lifecycle-coverage.md`)
 - [x] TODO-lisuv - Add inspect command for artifact and record lookup (`TODO/TODO-lisuv-add-inspect-command-for-artifact-and-record-lookup.md`)
 - [x] TODO-babad - Add make-based local workflows and demo helpers (`TODO/TODO-babad-add-make-based-local-workflows-and-demo-helpers.md`)
 - [x] TODO-babab - Harden assessment, evidence, and reporting invariants (`TODO/TODO-babab-harden-assessment-evidence-and-reporting-invariants.md`)

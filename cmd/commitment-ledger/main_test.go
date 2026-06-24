@@ -251,6 +251,35 @@ func TestLifecycleFlowUsesV2EvidenceAndAssessmentProtocols(t *testing.T) {
 		t.Fatalf("assessment basis = %#v, want [%q]", assessment.Basis, checkedEvidence.ArtifactCID)
 	}
 
+	inspectCommitment := captureStdout(t, func() error {
+		return runInspect(root, store, registry, []string{current.CommitmentID})
+	})
+	for _, fragment := range []string{
+		"Reference: " + current.CommitmentID,
+		"Kind: commitment_promise",
+		"Current Status: kept",
+		"Protocol: " + protocol.CommitmentPromise,
+	} {
+		if !strings.Contains(inspectCommitment, fragment) {
+			t.Fatalf("commitment inspect after assessment missing %q:\n%s", fragment, inspectCommitment)
+		}
+	}
+
+	inspectAssessment := captureStdout(t, func() error {
+		return runInspect(root, store, registry, []string{assessment.AssessmentID})
+	})
+	for _, fragment := range []string{
+		"Reference: " + assessment.AssessmentID,
+		"Kind: commitment_assessment",
+		"Assessment Status: kept",
+		"Current Commitment Status: kept",
+		"Protocol: " + protocol.CommitmentAssessment,
+	} {
+		if !strings.Contains(inspectAssessment, fragment) {
+			t.Fatalf("assessment inspect output missing %q:\n%s", fragment, inspectAssessment)
+		}
+	}
+
 	reportOut := captureStdout(t, func() error {
 		return runReport(store, []string{"--promiser", "Alice"})
 	})
