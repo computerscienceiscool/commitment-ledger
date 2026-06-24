@@ -31,10 +31,15 @@ The payload bytes are UTF-8 JSON with this shape:
   "kind": "implementation_conformance",
   "implementation": "commitment-ledger",
   "version": "v0.1.0",
-  "claimed_protocol_pcids": ["bafy...", "bafy...", "bafy..."],
+  "claimed_protocol_pcids": ["bafy...", "bafy...", "bafy...", "bafy...", "bafy...", "bafy..."],
+  "emitted_protocol_pcids": ["bafy...", "bafy...", "bafy...", "bafy..."],
+  "historical_protocol_pcids": ["bafy...", "bafy..."],
   "projection_rules": [
     "JSONL files are append-only local indexes over artifact history.",
-    "Markdown records are human-readable projections that retain artifact CIDs."
+    "Markdown records are human-readable projections that retain artifact CIDs.",
+    "claimed_protocol_pcids names the frozen protocol docs the implementation can interpret locally.",
+    "emitted_protocol_pcids names the frozen protocol docs current commands emit for new artifacts.",
+    "historical_protocol_pcids names older frozen docs retained for reading historical local artifacts but not emitted by current commands."
   ],
   "claimed_at": "2026-06-22T10:00:00-07:00"
 }
@@ -43,6 +48,9 @@ The payload bytes are UTF-8 JSON with this shape:
 ## Semantics
 
 - This claim is about what the implementation says it supports.
+- `claimed_protocol_pcids` names the frozen protocol docs the implementation can interpret locally.
+- `emitted_protocol_pcids` names the frozen protocol docs the current commands emit for new artifacts.
+- `historical_protocol_pcids` names older frozen docs retained for reading historical local artifacts but not emitted by current commands.
 - Projection rules are informative local behavior notes and do not replace the
   raw artifacts or protocol docs.
 

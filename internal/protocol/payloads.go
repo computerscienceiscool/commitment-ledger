@@ -39,10 +39,12 @@ type CommitmentAssessmentPayload struct {
 }
 
 type ImplementationConformancePayload struct {
-	Kind                 string   `json:"kind"`
-	Implementation       string   `json:"implementation"`
-	Version              string   `json:"version"`
-	ClaimedProtocolPCIDs []string `json:"claimed_protocol_pcids"`
-	ProjectionRules      []string `json:"projection_rules"`
-	ClaimedAt            string   `json:"claimed_at"`
+	Kind                    string   `json:"kind"`
+	Implementation          string   `json:"implementation"`
+	Version                 string   `json:"version"`
+	ClaimedProtocolPCIDs    []string `json:"claimed_protocol_pcids"`
+	EmittedProtocolPCIDs    []string `json:"emitted_protocol_pcids,omitempty"`
+	HistoricalProtocolPCIDs []string `json:"historical_protocol_pcids,omitempty"`
+	ProjectionRules         []string `json:"projection_rules"`
+	ClaimedAt               string   `json:"claimed_at"`
 }

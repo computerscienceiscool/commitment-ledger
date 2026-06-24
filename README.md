@@ -97,3 +97,7 @@ Observed work targets are always branch-qualified, for example
 
 - `docs/demo-plan.md` lays out a real-repo demo using Alice, Bob, Dave, and Mallory roles.
 - `docs/demo-script.md` is the spoken walkthrough with commands, files, and demo narration.
+
+## Version Notes
+
+- `docs/protocol-migration.md` explains the local `v1` to `v2` evidence and assessment transition and how conformance distinguishes claimed, emitted, and historical frozen protocol docs.

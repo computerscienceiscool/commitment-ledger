@@ -27,3 +27,5 @@ The current implementation emits:
 - `commitment-evidence-v2`
 - `commitment-assessment-v2`
 - `implementation-conformance-v1`
+
+See [docs/protocol-migration.md](/home/jj/lab/commitment-ledger/docs/protocol-migration.md) for the local `v1` to `v2` evidence and assessment migration story and the current conformance interpretation.

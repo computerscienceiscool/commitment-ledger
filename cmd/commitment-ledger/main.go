@@ -628,23 +628,7 @@ func emitConformanceArtifact(root string, store *ledger.Store, registry protocol
 	if err != nil {
 		return "", err
 	}
-	claimed := []string{
-		registry.MustPCID(protocol.CommitmentPromise),
-		registry.MustPCID(protocol.CommitmentEvidence),
-		registry.MustPCID(protocol.CommitmentAssessment),
-		registry.MustPCID(protocol.ImplementationConformance),
-	}
-	payloadBytes, err := protocol.MarshalPayload(protocol.ImplementationConformancePayload{
-		Kind:                 "implementation_conformance",
-		Implementation:       "commitment-ledger",
-		Version:              version,
-		ClaimedProtocolPCIDs: claimed,
-		ProjectionRules: []string{
-			"JSONL files are append-only local indexes over artifact history.",
-			"Markdown records are human-readable projections retaining artifact CIDs and protocol pCIDs.",
-		},
-		ClaimedAt: now.Format(time.RFC3339),
-	})
+	payloadBytes, err := protocol.MarshalPayload(buildConformancePayload(registry, version, now))
 	if err != nil {
 		return "", err
 	}
@@ -665,6 +649,43 @@ func emitConformanceArtifact(root string, store *ledger.Store, registry protocol
 		return "", err
 	}
 	return artifact.EnvelopeCID, nil
+}
+
+func buildConformancePayload(registry protocol.Registry, version string, now time.Time) protocol.ImplementationConformancePayload {
+	claimed := []string{
+		registry.MustPCID(protocol.CommitmentPromise),
+		registry.MustPCID(protocol.CommitmentEvidenceV1),
+		registry.MustPCID(protocol.CommitmentEvidence),
+		registry.MustPCID(protocol.CommitmentAssessmentV1),
+		registry.MustPCID(protocol.CommitmentAssessment),
+		registry.MustPCID(protocol.ImplementationConformance),
+	}
+	emitted := []string{
+		registry.MustPCID(protocol.CommitmentPromise),
+		registry.MustPCID(protocol.CommitmentEvidence),
+		registry.MustPCID(protocol.CommitmentAssessment),
+		registry.MustPCID(protocol.ImplementationConformance),
+	}
+	historical := []string{
+		registry.MustPCID(protocol.CommitmentEvidenceV1),
+		registry.MustPCID(protocol.CommitmentAssessmentV1),
+	}
+	return protocol.ImplementationConformancePayload{
+		Kind:                    "implementation_conformance",
+		Implementation:          "commitment-ledger",
+		Version:                 version,
+		ClaimedProtocolPCIDs:    claimed,
+		EmittedProtocolPCIDs:    emitted,
+		HistoricalProtocolPCIDs: historical,
+		ProjectionRules: []string{
+			"JSONL files are append-only local indexes over artifact history.",
+			"Markdown records are human-readable projections retaining artifact CIDs and protocol pCIDs.",
+			"claimed_protocol_pcids names the frozen protocol docs the implementation can interpret locally.",
+			"emitted_protocol_pcids names the frozen protocol docs current commands emit for new artifacts.",
+			"historical_protocol_pcids names older frozen docs retained for reading historical local artifacts but not emitted by current commands.",
+		},
+		ClaimedAt: now.Format(time.RFC3339),
+	}
 }
 
 func persistProtocolSpecs(store *ledger.Store, registry protocol.Registry) error {

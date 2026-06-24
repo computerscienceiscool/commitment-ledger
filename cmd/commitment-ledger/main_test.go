@@ -209,6 +209,50 @@ func TestLifecycleFlowUsesV2EvidenceAndAssessmentProtocols(t *testing.T) {
 	}
 }
 
+func TestConformanceArtifactDistinguishesClaimedEmittedAndHistoricalProtocols(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	now := time.Date(2026, 6, 24, 15, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	payload := buildConformancePayload(registry, "v0.1.0", now)
+	if len(payload.ClaimedProtocolPCIDs) != 6 {
+		t.Fatalf("claimed_protocol_pcids len = %d, want 6", len(payload.ClaimedProtocolPCIDs))
+	}
+	if len(payload.EmittedProtocolPCIDs) != 4 {
+		t.Fatalf("emitted_protocol_pcids len = %d, want 4", len(payload.EmittedProtocolPCIDs))
+	}
+	if len(payload.HistoricalProtocolPCIDs) != 2 {
+		t.Fatalf("historical_protocol_pcids len = %d, want 2", len(payload.HistoricalProtocolPCIDs))
+	}
+	if payload.EmittedProtocolPCIDs[1] != registry.MustPCID(protocol.CommitmentEvidence) {
+		t.Fatalf("emitted evidence pCID = %q, want v2 %q", payload.EmittedProtocolPCIDs[1], registry.MustPCID(protocol.CommitmentEvidence))
+	}
+	if payload.HistoricalProtocolPCIDs[0] != registry.MustPCID(protocol.CommitmentEvidenceV1) {
+		t.Fatalf("historical evidence pCID = %q, want v1 %q", payload.HistoricalProtocolPCIDs[0], registry.MustPCID(protocol.CommitmentEvidenceV1))
+	}
+
+	artifactCID, err := emitConformanceArtifact(root, store, registry, "commitment-ledger", "v0.1.0", now)
+	if err != nil {
+		t.Fatalf("emitConformanceArtifact: %v", err)
+	}
+
+	artifacts, err := store.LoadArtifacts()
+	if err != nil {
+		t.Fatalf("LoadArtifacts: %v", err)
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("got %d artifacts, want 1", len(artifacts))
+	}
+	if artifacts[0].ArtifactCID != artifactCID {
+		t.Fatalf("artifact CID = %q, want %q", artifacts[0].ArtifactCID, artifactCID)
+	}
+}
+
 func copyProtocolDocs(t *testing.T, root string) {
 	t.Helper()
 	repoRoot := repoRoot(t)

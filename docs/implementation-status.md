@@ -36,6 +36,15 @@ documents this implementation claims to speak. It is an explicit local
 statement of contract support, not a claim that upstream PromiseGrid has frozen
 those exact docs for everyone else.
 
+The current local conformance payload distinguishes between:
+
+- frozen protocol docs the implementation can interpret locally
+- frozen protocol docs current commands emit for new artifacts
+- frozen historical docs retained for older local artifacts
+
+That split is local version-accounting, not an upstream PromiseGrid-wide
+migration contract.
+
 ## Current Operator Reminder
 
 When inspecting `data/artifacts.jsonl`, remember that rows there are local
