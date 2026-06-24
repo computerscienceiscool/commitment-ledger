@@ -1351,7 +1351,8 @@ func TestRunDoctorAndReportJSON(t *testing.T) {
 	})
 	if !strings.Contains(doctorOut, "\"artifacts\": 2") ||
 		!strings.Contains(doctorOut, "\"errors\": []") ||
-		!strings.Contains(doctorOut, "\"repairable_errors\": []") {
+		!strings.Contains(doctorOut, "\"repairable_errors\": []") ||
+		!strings.Contains(doctorOut, "\"repair_actions\": []") {
 		t.Fatalf("unexpected doctor json output:\n%s", doctorOut)
 	}
 
@@ -1503,6 +1504,7 @@ func TestRunDoctorRepairableHintsImportedArtifactCAS(t *testing.T) {
 	}
 	if !strings.Contains(doctorOut, "Repairable Errors: 1") ||
 		!strings.Contains(doctorOut, "run repair --import-artifacts") ||
+		!strings.Contains(doctorOut, "Repair Action: repair --import-artifacts") ||
 		!strings.Contains(doctorOut, "Non-repairable Errors: 0") {
 		t.Fatalf("unexpected doctor repairable output:\n%s", doctorOut)
 	}
@@ -1513,6 +1515,17 @@ func TestRunDoctorRepairableHintsImportedArtifactCAS(t *testing.T) {
 	}
 	if len(report.RepairableErrors) != 1 || len(report.NonRepairableErrors) != 0 || len(report.RepairHints) != 1 {
 		t.Fatalf("unexpected doctor report classification: %#v", report)
+	}
+
+	jsonOut, jsonErr := captureStdoutWithError(t, func() error {
+		return runDoctor(root, store, registry, []string{"--json"})
+	})
+	if jsonErr == nil || !strings.Contains(jsonErr.Error(), "doctor found 1 error") {
+		t.Fatalf("runDoctor --json error = %v, want doctor failure", jsonErr)
+	}
+	if !strings.Contains(jsonOut, "\"repair_actions\": [") ||
+		!strings.Contains(jsonOut, "\"--import-artifacts\"") {
+		t.Fatalf("doctor json output missing repair action mapping:\n%s", jsonOut)
 	}
 }
 
@@ -1889,6 +1902,60 @@ func TestRunRepairIdentityLineageNormalizesArchivedFilename(t *testing.T) {
 		if strings.Contains(issue, "filename mismatch") || strings.Contains(issue, "missing archived key file") {
 			t.Fatalf("expected lineage repair to clear archive filename issues, still have: %#v", report)
 		}
+	}
+}
+
+func TestRunRepairJSON(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	if _, _, _, err := identity.LoadOrCreate(root, "Alice"); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+
+	out := captureStdout(t, func() error {
+		return runRepair(root, store, registry, []string{"--json", "--identity-lineage"})
+	})
+	for _, fragment := range []string{
+		"\"identity_lineage\": true",
+		"\"normalized_archived_identity_files\": 0",
+		"\"restored_imported_artifact_envelopes\": 0",
+	} {
+		if !strings.Contains(out, fragment) {
+			t.Fatalf("repair json output missing %q:\n%s", fragment, out)
+		}
+	}
+}
+
+func TestRunIdentityBackupWritesCurrentAndArchivedKeys(t *testing.T) {
+	root := t.TempDir()
+	if _, _, _, err := identity.LoadOrCreate(root, "Alice"); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+	if err := runIdentity(root, []string{"rotate", "--name", "Alice"}); err != nil {
+		t.Fatalf("runIdentity rotate: %v", err)
+	}
+	outPath := filepath.Join(root, "backups", "alice-identities.json")
+
+	stdout := captureStdout(t, func() error {
+		return runIdentity(root, []string{"backup", "--out", outPath, "--json", "Alice"})
+	})
+	if !strings.Contains(stdout, "\"name\": \"Alice\"") ||
+		!strings.Contains(stdout, "\"key_id\": \"alice-ed25519-v2\"") ||
+		!strings.Contains(stdout, "\"key_id\": \"alice-ed25519-v1\"") {
+		t.Fatalf("identity backup json output incomplete:\n%s", stdout)
+	}
+	data, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read identity backup: %v", err)
+	}
+	if !strings.Contains(string(data), "\"name\": \"Alice\"") ||
+		!strings.Contains(string(data), "\"private_key\":") {
+		t.Fatalf("identity backup file missing expected private material:\n%s", string(data))
 	}
 }
 

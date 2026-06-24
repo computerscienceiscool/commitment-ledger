@@ -385,6 +385,7 @@ go run ./cmd/commitment-ledger repair --protocol-cas
 go run ./cmd/commitment-ledger repair --import-artifacts
 go run ./cmd/commitment-ledger repair --import-support
 go run ./cmd/commitment-ledger repair --identity-lineage
+go run ./cmd/commitment-ledger repair --json --identity-lineage
 ```
 
 `repair` is intentionally conservative. Today it can:
@@ -397,7 +398,6 @@ go run ./cmd/commitment-ledger repair --identity-lineage
 
 It does not recreate missing archived private keys that no longer exist anywhere
 local. Those remain manual recovery cases.
-- restore missing imported signer and protocol support files from previously recorded bundle source paths
 
 It still does not resolve projection conflicts or synthesize bundle sources that
 no longer exist locally.
@@ -408,6 +408,7 @@ no longer exist locally.
 go run ./cmd/commitment-ledger identity list --json
 go run ./cmd/commitment-ledger identity show Alice
 go run ./cmd/commitment-ledger identity history Alice --json
+go run ./cmd/commitment-ledger identity backup --out /tmp/alice-identities.json Alice
 go run ./cmd/commitment-ledger identity rotate --name Alice
 ```
 
@@ -417,6 +418,8 @@ go run ./cmd/commitment-ledger identity rotate --name Alice
 - `show` prints the current key ID, path, and public key for one name
 - `history` shows the current key plus archived and imported key material for
   one signer name
+- `backup` exports current plus archived local private identity material for one
+  signer or for all local primary signers when no names are given
 - `rotate` archives the old private key file under `config/identities/archive/`
   and writes a new keypair to the primary identity path
 
@@ -486,6 +489,12 @@ For a local backup, preserve these paths together:
 - `config/trust-policy.json` if present
 - `docs/protocols/`
 - `CHANGELOG.md`
+
+For signer continuity, you can also export a dedicated identity backup file:
+
+```bash
+go run ./cmd/commitment-ledger identity backup --out /safe/path/identities.json
+```
 
 Recommended recovery flow:
 

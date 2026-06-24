@@ -999,6 +999,13 @@ func runDoctor(root string, store *ledger.Store, registry protocol.Registry, arg
 				fmt.Printf("Repair Hint: %s\n", hint)
 			}
 		}
+		if len(report.RepairActions) == 0 {
+			fmt.Println("Repair Actions: none")
+		} else {
+			for _, action := range report.RepairActions {
+				fmt.Printf("Repair Action: repair %s\n", action)
+			}
+		}
 		fmt.Printf("Non-repairable Errors: %d\n", len(report.NonRepairableErrors))
 		for _, issue := range report.NonRepairableErrors {
 			fmt.Printf("Non-repairable: %s\n", issue)
@@ -1025,6 +1032,9 @@ func runDoctor(root string, store *ledger.Store, registry protocol.Registry, arg
 	for _, hint := range report.RepairHints {
 		fmt.Printf("Repair Hint: %s\n", hint)
 	}
+	for _, action := range report.RepairActions {
+		fmt.Printf("Repair Action: repair %s\n", action)
+	}
 	if len(report.Errors) > 0 {
 		return fmt.Errorf("doctor found %d error(s)", len(report.Errors))
 	}
@@ -1038,6 +1048,7 @@ func runRepair(root string, store *ledger.Store, registry protocol.Registry, arg
 	importArtifacts := fs.Bool("import-artifacts", false, "restore imported artifact envelopes from bundle source paths when possible")
 	importSupport := fs.Bool("import-support", false, "restore imported signer and protocol support from bundle source paths when possible")
 	identityLineage := fs.Bool("identity-lineage", false, "normalize archived identity filenames when the original key material is still present")
+	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1116,6 +1127,26 @@ func runRepair(root string, store *ledger.Store, registry protocol.Registry, arg
 		normalizedArchivedIdentities = count
 	}
 
+	result := repairResult{
+		Applied: repairApplied{
+			Records:         *records,
+			ProtocolCAS:     *protocolCAS,
+			ImportArtifacts: *importArtifacts,
+			ImportSupport:   *importSupport,
+			IdentityLineage: *identityLineage,
+		},
+		RewroteCommitmentRecords:          rewrittenCommitments,
+		RewroteAssessmentRecords:          rewrittenAssessments,
+		RestoredBuiltInProtocolDocsToCAS:  restoredProtocols,
+		RestoredImportedArtifactEnvelopes: restoredImportedArtifacts,
+		RestoredImportedProtocolSupport:   restoredImportedProtocols,
+		RestoredImportedSignerSupport:     restoredImportedSigners,
+		NormalizedArchivedIdentityFiles:   normalizedArchivedIdentities,
+	}
+	if *jsonOut {
+		return printJSON(result)
+	}
+
 	fmt.Printf("Rewrote commitment records: %d\n", rewrittenCommitments)
 	fmt.Printf("Rewrote assessment records: %d\n", rewrittenAssessments)
 	fmt.Printf("Restored built-in protocol docs to CAS: %d\n", restoredProtocols)
@@ -1142,6 +1173,36 @@ type identityHistory struct {
 	Imported *identityInfo  `json:"imported,omitempty"`
 }
 
+type identityBackup struct {
+	ExportedAt string                  `json:"exported_at"`
+	Identities []identityBackupHistory `json:"identities"`
+}
+
+type identityBackupHistory struct {
+	Name     string              `json:"name"`
+	Current  *identity.Identity  `json:"current,omitempty"`
+	Archived []identity.Identity `json:"archived,omitempty"`
+}
+
+type repairApplied struct {
+	Records         bool `json:"records"`
+	ProtocolCAS     bool `json:"protocol_cas"`
+	ImportArtifacts bool `json:"import_artifacts"`
+	ImportSupport   bool `json:"import_support"`
+	IdentityLineage bool `json:"identity_lineage"`
+}
+
+type repairResult struct {
+	Applied                           repairApplied `json:"applied"`
+	RewroteCommitmentRecords          int           `json:"rewrote_commitment_records"`
+	RewroteAssessmentRecords          int           `json:"rewrote_assessment_records"`
+	RestoredBuiltInProtocolDocsToCAS  int           `json:"restored_built_in_protocol_docs_to_cas"`
+	RestoredImportedArtifactEnvelopes int           `json:"restored_imported_artifact_envelopes"`
+	RestoredImportedProtocolSupport   int           `json:"restored_imported_protocol_support"`
+	RestoredImportedSignerSupport     int           `json:"restored_imported_signer_support"`
+	NormalizedArchivedIdentityFiles   int           `json:"normalized_archived_identity_files"`
+}
+
 type identityMatch struct {
 	Identity identity.Identity
 	Info     identityInfo
@@ -1150,7 +1211,7 @@ type identityMatch struct {
 
 func runIdentity(root string, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("identity requires a subcommand: list, show, history, rotate")
+		return fmt.Errorf("identity requires a subcommand: list, show, history, backup, rotate")
 	}
 	switch args[0] {
 	case "list":
@@ -1159,6 +1220,8 @@ func runIdentity(root string, args []string) error {
 		return runIdentityShow(root, args[1:])
 	case "history":
 		return runIdentityHistory(root, args[1:])
+	case "backup":
+		return runIdentityBackup(root, args[1:])
 	case "rotate":
 		return runIdentityRotate(root, args[1:])
 	default:
@@ -1239,6 +1302,37 @@ func runIdentityHistory(root string, args []string) error {
 	for _, item := range history.Archived {
 		fmt.Printf("Archived Key: %s %s\n", item.KeyID, item.Path)
 	}
+	return nil
+}
+
+func runIdentityBackup(root string, args []string) error {
+	fs := flag.NewFlagSet("identity backup", flag.ContinueOnError)
+	outPath := fs.String("out", "", "write backup json to this path")
+	jsonOut := fs.Bool("json", false, "emit JSON to stdout")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	backup, err := buildIdentityBackup(root, fs.Args())
+	if err != nil {
+		return err
+	}
+	if *outPath != "" {
+		data, err := json.MarshalIndent(backup, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal identity backup: %w", err)
+		}
+		if err := os.MkdirAll(filepath.Dir(*outPath), 0o755); err != nil {
+			return fmt.Errorf("mkdir identity backup dir: %w", err)
+		}
+		if err := os.WriteFile(*outPath, data, 0o600); err != nil {
+			return fmt.Errorf("write identity backup %q: %w", *outPath, err)
+		}
+	}
+	if *jsonOut || *outPath == "" {
+		return printJSON(backup)
+	}
+	fmt.Printf("Wrote identity backup: %s\n", *outPath)
+	fmt.Printf("Identities backed up: %d\n", len(backup.Identities))
 	return nil
 }
 
@@ -1356,6 +1450,63 @@ func loadIdentityHistory(root string, name string) (identityHistory, error) {
 	}
 	if history.Current == nil && history.Imported == nil && len(history.Archived) == 0 {
 		return identityHistory{}, fmt.Errorf("identity %q not found", name)
+	}
+	return history, nil
+}
+
+func buildIdentityBackup(root string, names []string) (identityBackup, error) {
+	selected := names
+	if len(selected) == 0 {
+		items, err := listIdentityDir(root, filepath.Join(root, "config", "identities"), "primary")
+		if err != nil {
+			return identityBackup{}, err
+		}
+		selected = make([]string, 0, len(items))
+		for _, item := range items {
+			selected = append(selected, item.Name)
+		}
+	}
+	sort.Strings(selected)
+	out := identityBackup{
+		ExportedAt: time.Now().UTC().Format(time.RFC3339),
+		Identities: make([]identityBackupHistory, 0, len(selected)),
+	}
+	seen := map[string]struct{}{}
+	for _, name := range selected {
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		history, err := loadIdentityBackupHistory(root, name)
+		if err != nil {
+			return identityBackup{}, err
+		}
+		out.Identities = append(out.Identities, history)
+	}
+	return out, nil
+}
+
+func loadIdentityBackupHistory(root string, name string) (identityBackupHistory, error) {
+	history := identityBackupHistory{Name: name}
+	primaryPath := filepath.Join(root, identityPathForName(name))
+	if ident, err := readIdentityFile(primaryPath); err == nil {
+		history.Current = &ident
+	} else if !os.IsNotExist(err) {
+		return identityBackupHistory{}, err
+	}
+	archived, err := loadArchivedIdentityInfos(root, name)
+	if err != nil {
+		return identityBackupHistory{}, err
+	}
+	for _, item := range archived {
+		ident, err := readIdentityFile(item.Path)
+		if err != nil {
+			return identityBackupHistory{}, err
+		}
+		history.Archived = append(history.Archived, ident)
+	}
+	if history.Current == nil && len(history.Archived) == 0 {
+		return identityBackupHistory{}, fmt.Errorf("identity %q not found", name)
 	}
 	return history, nil
 }
@@ -2928,6 +3079,7 @@ type doctorSummary struct {
 	RepairableErrors    []string `json:"repairable_errors"`
 	NonRepairableErrors []string `json:"non_repairable_errors"`
 	RepairHints         []string `json:"repair_hints"`
+	RepairActions       []string `json:"repair_actions"`
 }
 
 func doctorReport(root string, store *ledger.Store, registry protocol.Registry) (doctorSummary, error) {
@@ -2937,6 +3089,7 @@ func doctorReport(root string, store *ledger.Store, registry protocol.Registry) 
 		RepairableErrors:    []string{},
 		NonRepairableErrors: []string{},
 		RepairHints:         []string{},
+		RepairActions:       []string{},
 	}
 	imports, err := store.LoadImports()
 	if err != nil {
@@ -3012,6 +3165,7 @@ func doctorReport(root string, store *ledger.Store, registry protocol.Registry) 
 			return summary, err
 		}
 	}
+	summary.RepairActions = recommendedRepairActions(summary)
 	_ = registry
 	return summary, nil
 }
@@ -3026,6 +3180,28 @@ func addDoctorError(summary *doctorSummary, message string, repairable bool, hin
 	if hint != "" && !stringSliceContains(summary.RepairHints, hint) {
 		summary.RepairHints = append(summary.RepairHints, hint)
 	}
+}
+
+func recommendedRepairActions(summary doctorSummary) []string {
+	actions := []string{}
+	for _, hint := range summary.RepairHints {
+		switch {
+		case strings.Contains(hint, "repair --import-artifacts"):
+			actions = appendRepairAction(actions, "--import-artifacts")
+		case strings.Contains(hint, "repair --import-support"):
+			actions = appendRepairAction(actions, "--import-support")
+		case strings.Contains(hint, "repair --identity-lineage"):
+			actions = appendRepairAction(actions, "--identity-lineage")
+		}
+	}
+	return actions
+}
+
+func appendRepairAction(actions []string, flag string) []string {
+	if !stringSliceContains(actions, flag) {
+		actions = append(actions, flag)
+	}
+	return actions
 }
 
 func doctorIdentityDir(root string, dir string, primary bool, summary *doctorSummary, importedSigners map[string]struct{}) error {

@@ -64,9 +64,10 @@ commitment-ledger send --outbox /tmp/peer-outbox COMMITMENT-...
 commitment-ledger receive --inbox /tmp/peer-inbox --archive /tmp/peer-archive
 commitment-ledger doctor --json
 commitment-ledger doctor --repairable
-commitment-ledger repair --import-artifacts --import-support
+commitment-ledger repair --json --import-artifacts --import-support --identity-lineage
 commitment-ledger identity list --json
 commitment-ledger identity history Alice --json
+commitment-ledger identity backup --out /tmp/alice-identities.json Alice
 commitment-ledger identity rotate --name Alice
 ```
 
@@ -177,11 +178,12 @@ Observed work targets are always branch-qualified, for example
 - bundle files and `config/trust-policy.json` are parsed with strict schema checks; unknown fields and incomplete required sections now fail early.
 - `send` and `receive` add a local filesystem inbox/outbox exchange path on top of the bundle format; they are still not network transport.
 - `status --exchange` and `report --imports` now surface receive-receipt coverage, receipt signer patterns, and whether imported artifact signers resolve locally as active, archived, imported, or unknown.
-- `doctor` checks local artifact index entries against CAS bytes, validates imported support files, and flags identity-lineage problems such as missing archived signer keys or artifacts signed by unknown historical keys; `doctor --json` emits a stable machine-readable summary and `doctor --repairable` separates repairable findings from non-repairable ones.
+- `doctor` checks local artifact index entries against CAS bytes, validates imported support files, and flags identity-lineage problems such as missing archived signer keys or artifacts signed by unknown historical keys; `doctor --json` emits a stable machine-readable summary, including recommended `repair` flags when recovery is possible, and `doctor --repairable` separates repairable findings from non-repairable ones.
 - `repair --identity-lineage` repairs the recoverable subset of lineage issues by normalizing archived identity filenames when the archived key bytes still exist locally under the wrong name.
+- `repair --json` emits machine-readable counts for each applied recovery step.
 - `repair --import-support` restores imported signer and protocol support files from recorded bundle source paths when those support files have gone missing.
 - `repair` rebuilds Markdown records from JSONL state, restores built-in frozen protocol docs into local CAS, and can restore missing imported artifact envelopes from recorded bundle source paths.
-- `identity list`, `identity show`, `identity history`, and `identity rotate` provide a basic local signer lifecycle workflow with archive copies of rotated keys.
+- `identity list`, `identity show`, `identity history`, `identity backup`, and `identity rotate` provide a basic local signer lifecycle workflow with archive copies of rotated keys.
 
 ## Backup And Recovery
 
@@ -193,6 +195,9 @@ For a reliable local backup, capture these together:
 - `config/imported-identities/`
 - `config/trust-policy.json` if you use it
 - `docs/protocols/` and `CHANGELOG.md`
+
+You can also export current plus archived private identity material directly
+with `commitment-ledger identity backup --out /safe/path/identities.json`.
 
 After restoring, run `make doctor` before trusting the restored state.
 
