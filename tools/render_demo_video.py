@@ -173,9 +173,9 @@ def make_demo_steps(workspace: Path) -> list[Step]:
         "--promiser Alice "
         "--repo alice-demo "
         "--branch main "
-        "--target alice-demo/main/TODO-ravud/2 "
-        "--due 2026-07-02 "
-        "--promise \"I promise to complete TODO-ravud subtask 2.\""
+        "--target alice-demo/main/TODO-ravud/1 "
+        "--due 2026-07-01 "
+        "--promise \"I promise to complete TODO-ravud subtask 1.\""
     )
     commit_out = run(commit_cmd, workspace)
     commitment_id, commitment_cid = commit_out.split()
@@ -217,21 +217,34 @@ def make_demo_steps(workspace: Path) -> list[Step]:
         )
     )
 
+    inspect_cmd = f"go run ./cmd/commitment-ledger inspect --json {commitment_id}"
+    steps.append(
+        Step(
+            title="Step 7: Operator Inspect View",
+            commands=[inspect_cmd],
+            say=[
+                "Inspect is the operator-facing lookup view over the commitment artifact.",
+                "It resolves the local record, signer, protocol doc, and projected status in one place.",
+            ],
+            output=run(inspect_cmd, workspace),
+        )
+    )
+
     check_cmd = (
         "python3 - <<'PY'\n"
         "from pathlib import Path\n"
         "path = Path('demo-repos/alice-demo/TODO/TODO-ravud-ship-welcome-flow.md')\n"
         "text = path.read_text()\n"
-        "text = text.replace('- [ ] 2. Add tests', '- [x] 2. Add tests')\n"
+        "text = text.replace('- [ ] 1. Add route', '- [x] 1. Add route')\n"
         "path.write_text(text)\n"
         "PY\n"
         "git -C demo-repos/alice-demo add TODO/TODO-ravud-ship-welcome-flow.md\n"
-        "git -C demo-repos/alice-demo -c user.name=Alice -c user.email=alice@example.com commit -m \"Complete Alice subtask 2\""
+        "git -C demo-repos/alice-demo -c user.name=Alice -c user.email=alice@example.com commit -m \"Complete Alice subtask 1\""
     )
     check_out = run(check_cmd, workspace)
     steps.append(
         Step(
-            title="Step 7: Alice Actually Does The Work",
+            title="Step 8: Alice Actually Does The Work",
             commands=check_cmd.splitlines(),
             say=[
                 "The source evidence lives in the work repo, not only in the ledger repo.",
@@ -244,7 +257,7 @@ def make_demo_steps(workspace: Path) -> list[Step]:
     scan2 = run("go run ./cmd/commitment-ledger scan --config config/repos.json", workspace)
     steps.append(
         Step(
-            title="Step 8: Scan Again To Capture Evidence",
+            title="Step 9: Scan Again To Capture Evidence",
             commands=["go run ./cmd/commitment-ledger scan --config config/repos.json"],
             say=[
                 "The second scan sees that the promised subtask is now checked.",
@@ -266,7 +279,7 @@ def make_demo_steps(workspace: Path) -> list[Step]:
     evidence_id = todo_checked_line.split('"evidence_id":"', 1)[1].split('"', 1)[0]
     steps.append(
         Step(
-            title="Step 9: Evidence Row",
+            title="Step 10: Evidence Row",
             commands=[evidence_cmd],
             say=[
                 "This shows the commitment-linked evidence rows.",
@@ -288,7 +301,7 @@ def make_demo_steps(workspace: Path) -> list[Step]:
     assessment_id = assess_out.split()[0]
     steps.append(
         Step(
-            title="Step 10: Assess The Promise As Kept",
+            title="Step 11: Assess The Promise As Kept",
             commands=[assess_cmd],
             say=[
                 "Checked state is evidence; assessment is a separate explicit act.",
@@ -298,11 +311,24 @@ def make_demo_steps(workspace: Path) -> list[Step]:
         )
     )
 
+    verify_cmd = f"go run ./cmd/commitment-ledger verify --json {assessment_id}"
+    steps.append(
+        Step(
+            title="Step 12: Verify The Assessment Artifact",
+            commands=[verify_cmd],
+            say=[
+                "Verify is the integrity check over local CAS bytes, signer material, and protocol linkage.",
+                "It tells the operator whether the final assessment artifact is structurally and cryptographically consistent.",
+            ],
+            output=run(verify_cmd, workspace),
+        )
+    )
+
     assessment_record_cmd = f"cat records/assessments/{assessment_id}.md"
     report_cmd = "go run ./cmd/commitment-ledger report --promiser Alice"
     steps.append(
         Step(
-            title="Step 11: Final Human View",
+            title="Step 13: Final Human View",
             commands=[assessment_record_cmd, report_cmd],
             say=[
                 "Now we can see the full chain: work, promise, evidence, and assessment.",
@@ -314,7 +340,7 @@ def make_demo_steps(workspace: Path) -> list[Step]:
 
     steps.append(
         Step(
-            title="Step 12: Contrast Bob And Mallory",
+            title="Step 14: Contrast Bob And Mallory",
             commands=[
                 "sed -n '1,30p' demo-repos/mallory-demo/TODO/TODO-falun-handle-malformed-packet-report.md",
                 "go run ./cmd/commitment-ledger report --repo bob-demo --branch main",

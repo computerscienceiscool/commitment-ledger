@@ -224,6 +224,7 @@ After restoring, run `make doctor` before trusting the restored state.
 
 ## Demo Docs
 
+- `docs/demo-video.mp4` is the rendered walkthrough asset for the current Alice/Bob/Mallory demo flow.
 - `docs/demo-plan.md` lays out a real-repo demo using Alice, Bob, Dave, and Mallory roles.
 - `docs/demo-script.md` is the spoken walkthrough with commands, files, and demo narration.
 - `docs/operator-guide.md` is the practical runbook for local operation, inspection, and troubleshooting.

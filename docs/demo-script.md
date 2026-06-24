@@ -13,6 +13,10 @@ It combines:
 
 This is meant to be read aloud while driving the terminal.
 
+`tools/render_demo_video.py` renders `docs/demo-video.mp4` from the same core
+Alice happy-path scenario plus the current `inspect` and `verify` operator
+checkpoints.
+
 ## Demo Cast
 
 Use these names consistently:
@@ -224,7 +228,30 @@ What to point at:
 - `proof_cid`
 - `related_id`
 
-## Step 7: Make Alice Actually Do The Work
+## Step 7: Inspect Alice’s Commitment
+
+Commands:
+
+```bash
+GOCACHE=/tmp/gocache go run ./cmd/commitment-ledger inspect --json "$COMMITMENT_ID"
+```
+
+What to say:
+
+> This is the operator-facing lookup view.
+
+> It ties the local commitment ID back to the artifact CID, protocol document,
+> signer, and current projected state in one place.
+
+What to point at:
+
+- `artifact_cid`
+- `protocol_pcid`
+- `signer`
+- `record_path`
+- `details`
+
+## Step 8: Make Alice Actually Do The Work
 
 Commands:
 
@@ -249,7 +276,7 @@ What to say:
 > We are changing the actual subtask state and committing it like normal repo
 > work.
 
-## Step 8: Scan Again To Capture Evidence
+## Step 9: Scan Again To Capture Evidence
 
 Commands:
 
@@ -271,7 +298,7 @@ What to point at:
 - commitment reference
 - target `alice-demo/main/TODO-ravud/1`
 
-## Step 9: Assess Alice As Kept
+## Step 10: Assess Alice As Kept
 
 Commands:
 
@@ -296,7 +323,31 @@ What to say:
 > This keeps the system from pretending that every observable state change is
 > already a universal verdict.
 
-## Step 10: Show The Result
+## Step 11: Verify The Assessment Artifact
+
+Commands:
+
+```bash
+ASSESSMENT_ID=$(tail -n 1 /home/jj/lab/commitment-ledger/data/assessments.jsonl | sed -E 's/.*"assessment_id":"([^"]+)".*/\1/')
+GOCACHE=/tmp/gocache go run ./cmd/commitment-ledger verify --json "$ASSESSMENT_ID"
+```
+
+What to say:
+
+> `verify` is the local integrity check over artifact bytes, signer material,
+> and protocol linkage.
+
+> It does not tell us whether Alice was morally good. It tells us whether the
+> stored assessment artifact is internally and cryptographically consistent.
+
+What to point at:
+
+- `signature_verified`
+- `signer_identity_verified`
+- `local_protocol_match`
+- `overall_trusted`
+
+## Step 12: Show The Result
 
 Commands:
 
@@ -319,7 +370,7 @@ What to say:
 
 > This is the basic PromiseGrid-shaped story the tool is trying to make visible.
 
-## Step 11: Contrast Bob
+## Step 13: Contrast Bob
 
 Commands:
 
@@ -345,7 +396,7 @@ What to say:
 
 > Assessment remains a separate step.
 
-## Step 12: Contrast Mallory
+## Step 14: Contrast Mallory
 
 Commands:
 

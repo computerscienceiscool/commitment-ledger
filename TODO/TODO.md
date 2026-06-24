@@ -17,7 +17,7 @@ Retrospective note:
 - [x] TODO-fesob - Add bundle-path loss recovery (`TODO/TODO-fesob-add-bundle-path-loss-recovery.md`)
 - [x] TODO-lutav - Add richer exchange analytics (`TODO/TODO-lutav-add-richer-exchange-analytics.md`)
 - [x] TODO-pivok - Add machine-readable contract documentation and versioning (`TODO/TODO-pivok-add-machine-readable-contract-documentation-and-versioning.md`)
-- [ ] TODO-mesad - Update demo and operator videos (`TODO/TODO-mesad-update-demo-and-operator-videos.md`)
+- [x] TODO-mesad - Update demo and operator videos (`TODO/TODO-mesad-update-demo-and-operator-videos.md`)
 - [ ] TODO-qatig - Update the site (`TODO/TODO-qatig-update-the-site.md`)
 - [ ] TODO-dorun - Update documentation (`TODO/TODO-dorun-update-documentation.md`)
 - [x] TODO-zarek - Add commitment-level exchange reconciliation (`TODO/TODO-zarek-add-commitment-level-exchange-reconciliation.md`)
