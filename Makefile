@@ -55,7 +55,7 @@ help:
 	@echo "  make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'"
 	@echo "  make import IMPORT_ARGS='--in /tmp/bundle.json'"
 	@echo "  make provenance PROVENANCE_ARGS='--mode receive --receipt-signer commitment-ledger --json'"
-	@echo "  make reconcile RECONCILE_ARGS='--artifact COMMITMENT-... --receipt-signer commitment-ledger --json'"
+	@echo "  make reconcile RECONCILE_ARGS='--commitment COMMITMENT-... --json'"
 	@echo "  make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'"
 	@echo "  make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'"
 	@echo "  make doctor DOCTOR_ARGS='--repairable --strict'"

@@ -13,6 +13,10 @@ Retrospective note:
 - The retrospective checklist at the end of this file records the major later
   work that was completed but not tracked here in the intended way.
 
+- [x] TODO-zarek - Add commitment-level exchange reconciliation (`TODO/TODO-zarek-add-commitment-level-exchange-reconciliation.md`)
+- [x] TODO-nopud - Harden identity restore conflict and partial-restore behavior (`TODO/TODO-nopud-harden-identity-restore-conflict-and-partial-restore-behavior.md`)
+- [x] TODO-garuk - Add negative-path exchange fixtures (`TODO/TODO-garuk-add-negative-path-exchange-fixtures.md`)
+- [x] TODO-savik - Review repo health after exchange and recovery hardening (`TODO/TODO-savik-review-repo-health-after-exchange-and-recovery-hardening.md`)
 - [x] TODO-lavok - Add bundle-to-receipt reconciliation views (`TODO/TODO-lavok-add-bundle-to-receipt-reconciliation-views.md`)
 - [x] TODO-togiv - Restore validation and conflict handling polish (`TODO/TODO-togiv-restore-validation-and-conflict-handling-polish.md`)
 - [x] TODO-temuk - Add bundle export/import artifact exchange (`TODO/TODO-temuk-add-bundle-export-import-artifact-exchange.md`)

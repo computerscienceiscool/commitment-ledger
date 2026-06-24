@@ -30,7 +30,7 @@ make conformance-update VERSION=v0.1.0 SIGNER=commitment-ledger
 make export EXPORT_ARGS='--out /tmp/bundle.json COMMITMENT-...'
 make import IMPORT_ARGS='--in /tmp/bundle.json'
 make provenance PROVENANCE_ARGS='--mode receive --json'
-make reconcile RECONCILE_ARGS='--artifact COMMITMENT-... --receipt-signer commitment-ledger --json'
+make reconcile RECONCILE_ARGS='--commitment COMMITMENT-... --json'
 make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'
 make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'
 make doctor DOCTOR_ARGS='--repairable'
@@ -321,21 +321,27 @@ imported artifact.
 ### `reconcile`
 
 ```bash
+go run ./cmd/commitment-ledger reconcile --commitment COMMITMENT-...
 go run ./cmd/commitment-ledger reconcile --artifact COMMITMENT-...
 go run ./cmd/commitment-ledger reconcile --artifact bafy... --receipt-signer commitment-ledger
 go run ./cmd/commitment-ledger reconcile --source /tmp/peer-inbox/bundle.json --json
 go run ./cmd/commitment-ledger reconcile --mode receive --protocol-pcid bafy... --json
 ```
 
-`reconcile` is the artifact-level exchange view built on top of raw provenance
-rows.
+`reconcile` is the exchange-chain view built on top of raw provenance rows.
 
 Use it when you need one direct answer for:
 
+- which imported promise, evidence, and assessment artifacts belong to one
+  commitment
 - which bundle source paths introduced an artifact
 - whether the same artifact was imported again through another path or mode
 - which local receive receipts acknowledge that artifact
 - what signer key state and trust outcome apply across the chain
+
+Use `--commitment COMMITMENT-...` when you want the whole chain for a
+commitment. That view summarizes the imported promise, imported evidence,
+imported assessments, and receipt coverage together.
 
 Each row shows:
 
@@ -458,7 +464,8 @@ go run ./cmd/commitment-ledger identity rotate --name Alice
 - `backup` exports current plus archived local private identity material for one
   signer or for all local primary signers when no names are given
 - `restore` restores current and archived local private identity material from a
-  backup file when those identities do not conflict with different local keys
+  backup file, reports partial success, skips identical existing files, and
+  flags explicit conflicts when local key material differs from the backup
 - `rotate` archives the old private key file under `config/identities/archive/`
   and writes a new keypair to the primary identity path
 

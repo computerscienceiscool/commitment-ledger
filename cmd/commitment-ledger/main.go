@@ -888,6 +888,7 @@ func runProvenance(root string, store *ledger.Store, args []string) error {
 func runReconcile(root string, store *ledger.Store, registry protocol.Registry, args []string) error {
 	fs := flag.NewFlagSet("reconcile", flag.ContinueOnError)
 	artifactRef := fs.String("artifact", "", "filter by artifact CID or local reference")
+	commitmentID := fs.String("commitment", "", "filter by commitment id and include related imported artifacts")
 	sourcePath := fs.String("source", "", "filter by source path")
 	signer := fs.String("signer", "", "filter by artifact signer")
 	receiptSigner := fs.String("receipt-signer", "", "filter by receipt signer")
@@ -899,6 +900,9 @@ func runReconcile(root string, store *ledger.Store, registry protocol.Registry, 
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("reconcile does not accept positional references")
+	}
+	if strings.TrimSpace(*artifactRef) != "" && strings.TrimSpace(*commitmentID) != "" {
+		return fmt.Errorf("reconcile accepts either --artifact or --commitment, not both")
 	}
 
 	imports, err := store.LoadImports()
@@ -913,24 +917,35 @@ func runReconcile(root string, store *ledger.Store, registry protocol.Registry, 
 	if err != nil {
 		return err
 	}
+	commitments, err := store.LoadLatestCommitments()
+	if err != nil {
+		return err
+	}
+	evidenceItems, err := store.LoadEvidence()
+	if err != nil {
+		return err
+	}
+	assessments, err := store.LoadAssessments()
+	if err != nil {
+		return err
+	}
 
 	resolvedArtifactCID := strings.TrimSpace(*artifactRef)
 	if resolvedArtifactCID != "" {
-		commitments, err := store.LoadLatestCommitments()
-		if err != nil {
-			return err
-		}
-		evidenceItems, err := store.LoadEvidence()
-		if err != nil {
-			return err
-		}
-		assessments, err := store.LoadAssessments()
-		if err != nil {
-			return err
-		}
 		if artifact, err := resolveArtifactReference(resolvedArtifactCID, artifacts, commitments, evidenceItems, assessments); err == nil {
 			resolvedArtifactCID = artifact.ArtifactCID
 		}
+	}
+	if strings.TrimSpace(*commitmentID) != "" {
+		view, err := buildCommitmentReconcileView(root, registry, policy, commitments, evidenceItems, assessments, imports, artifacts, strings.TrimSpace(*commitmentID), *sourcePath, *signer, *receiptSigner, *mode, *protocolPCID)
+		if err != nil {
+			return err
+		}
+		if *jsonOut {
+			return printJSON(view)
+		}
+		printCommitmentReconcileView(view)
+		return nil
 	}
 
 	rows := buildReconcileRows(root, registry, policy, imports, artifacts, resolvedArtifactCID, *sourcePath, *signer, *receiptSigner, *mode, *protocolPCID)
@@ -1253,8 +1268,14 @@ type identityBackupHistory struct {
 }
 
 type identityRestoreResult struct {
-	RestoredCurrent  int `json:"restored_current"`
-	RestoredArchived int `json:"restored_archived"`
+	RequestedNames   []string `json:"requested_names,omitempty"`
+	RestoredCurrent  int      `json:"restored_current"`
+	RestoredArchived int      `json:"restored_archived"`
+	SkippedCurrent   int      `json:"skipped_current"`
+	SkippedArchived  int      `json:"skipped_archived"`
+	Partial          bool     `json:"partial"`
+	Conflicts        []string `json:"conflicts,omitempty"`
+	Skipped          []string `json:"skipped,omitempty"`
 }
 
 type repairApplied struct {
@@ -1430,10 +1451,34 @@ func runIdentityRestore(root string, args []string) error {
 		return err
 	}
 	if *jsonOut {
-		return printJSON(result)
+		if err := printJSON(result); err != nil {
+			return err
+		}
+		if len(result.Conflicts) > 0 {
+			return fmt.Errorf("identity restore completed with %d conflict(s)", len(result.Conflicts))
+		}
+		return nil
+	}
+	if len(result.RequestedNames) > 0 {
+		fmt.Printf("Requested identities: %s\n", strings.Join(result.RequestedNames, ", "))
 	}
 	fmt.Printf("Restored current identities: %d\n", result.RestoredCurrent)
 	fmt.Printf("Restored archived identities: %d\n", result.RestoredArchived)
+	fmt.Printf("Skipped current identities: %d\n", result.SkippedCurrent)
+	fmt.Printf("Skipped archived identities: %d\n", result.SkippedArchived)
+	fmt.Printf("Partial restore: %s\n", yesNo(result.Partial))
+	if len(result.Conflicts) > 0 {
+		fmt.Printf("Conflicts: %d\n", len(result.Conflicts))
+		for _, item := range result.Conflicts {
+			fmt.Printf("Conflict: %s\n", item)
+		}
+	}
+	for _, item := range result.Skipped {
+		fmt.Printf("Skipped: %s\n", item)
+	}
+	if len(result.Conflicts) > 0 {
+		return fmt.Errorf("identity restore completed with %d conflict(s)", len(result.Conflicts))
+	}
 	return nil
 }
 
@@ -1634,7 +1679,7 @@ func restoreIdentityBackup(root string, backup identityBackup, names []string) (
 	for _, name := range names {
 		selected[name] = struct{}{}
 	}
-	result := identityRestoreResult{}
+	result := identityRestoreResult{RequestedNames: append([]string(nil), names...)}
 	for _, item := range backup.Identities {
 		if len(selected) > 0 {
 			if _, ok := selected[item.Name]; !ok {
@@ -1648,48 +1693,69 @@ func restoreIdentityBackup(root string, backup identityBackup, names []string) (
 			return identityRestoreResult{}, fmt.Errorf("identity backup entry %q has no current or archived identities", item.Name)
 		}
 		if item.Current != nil {
-			if err := writeIdentityFileIfCompatible(filepath.Join(root, identityPathForName(item.Name)), *item.Current); err != nil {
+			status, err := writeIdentityFileForRestore(filepath.Join(root, identityPathForName(item.Name)), *item.Current)
+			if err != nil {
 				return identityRestoreResult{}, err
 			}
-			result.RestoredCurrent++
+			switch status {
+			case "restored":
+				result.RestoredCurrent++
+			case "skipped":
+				result.SkippedCurrent++
+				result.Skipped = append(result.Skipped, fmt.Sprintf("current %s already matched %s", item.Name, filepath.Join(root, identityPathForName(item.Name))))
+			case "conflict":
+				result.Conflicts = append(result.Conflicts, fmt.Sprintf("current %s at %s differs from backup", item.Name, filepath.Join(root, identityPathForName(item.Name))))
+			}
 		}
 		for _, archived := range item.Archived {
 			path := filepath.Join(root, "config", "identities", "archive", archiveIdentityFilename(item.Name, archived.KeyID))
-			if err := writeIdentityFileIfCompatible(path, archived); err != nil {
+			status, err := writeIdentityFileForRestore(path, archived)
+			if err != nil {
 				return identityRestoreResult{}, err
 			}
-			result.RestoredArchived++
+			switch status {
+			case "restored":
+				result.RestoredArchived++
+			case "skipped":
+				result.SkippedArchived++
+				result.Skipped = append(result.Skipped, fmt.Sprintf("archived %s %s already matched %s", item.Name, archived.KeyID, path))
+			case "conflict":
+				result.Conflicts = append(result.Conflicts, fmt.Sprintf("archived %s %s at %s differs from backup", item.Name, archived.KeyID, path))
+			}
 		}
 	}
 	if len(selected) > 0 && result.RestoredCurrent == 0 && result.RestoredArchived == 0 {
-		return identityRestoreResult{}, fmt.Errorf("identity backup did not contain requested names")
+		if len(result.Conflicts) == 0 && result.SkippedCurrent == 0 && result.SkippedArchived == 0 {
+			return identityRestoreResult{}, fmt.Errorf("identity backup did not contain requested names")
+		}
 	}
+	result.Partial = len(result.Conflicts) > 0 || result.SkippedCurrent > 0 || result.SkippedArchived > 0
 	return result, nil
 }
 
-func writeIdentityFileIfCompatible(path string, ident identity.Identity) error {
+func writeIdentityFileForRestore(path string, ident identity.Identity) (string, error) {
 	if ident.Name == "" || ident.KeyID == "" || ident.PublicKey == "" {
-		return fmt.Errorf("identity %q is incomplete", ident.Name)
+		return "", fmt.Errorf("identity %q is incomplete", ident.Name)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir identity dir for %q: %w", path, err)
+		return "", fmt.Errorf("mkdir identity dir for %q: %w", path, err)
 	}
 	payload, err := json.MarshalIndent(ident, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal identity %q: %w", ident.Name, err)
+		return "", fmt.Errorf("marshal identity %q: %w", ident.Name, err)
 	}
 	if existing, err := os.ReadFile(path); err == nil {
 		if string(existing) != string(payload) {
-			return fmt.Errorf("identity restore conflict at %s", path)
+			return "conflict", nil
 		}
-		return nil
+		return "skipped", nil
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("read identity %q: %w", path, err)
+		return "", fmt.Errorf("read identity %q: %w", path, err)
 	}
 	if err := os.WriteFile(path, payload, 0o600); err != nil {
-		return fmt.Errorf("write identity %q: %w", path, err)
+		return "", fmt.Errorf("write identity %q: %w", path, err)
 	}
-	return nil
+	return "restored", nil
 }
 
 func listIdentityDir(root string, dir string, source string) ([]identityInfo, error) {
@@ -2301,6 +2367,20 @@ type reconcileRow struct {
 	LatestImportSource      string             `json:"latest_import_source,omitempty"`
 }
 
+type commitmentReconcileView struct {
+	CommitmentID            string         `json:"commitment_id"`
+	Status                  string         `json:"status"`
+	Promiser                string         `json:"promiser"`
+	Repo                    string         `json:"repo"`
+	Branch                  string         `json:"branch"`
+	Targets                 []string       `json:"targets,omitempty"`
+	ImportedArtifactCount   int            `json:"imported_artifact_count"`
+	ImportedEvidenceCount   int            `json:"imported_evidence_count"`
+	ImportedAssessmentCount int            `json:"imported_assessment_count"`
+	ReceiptArtifacts        int            `json:"receipt_artifacts"`
+	Rows                    []reconcileRow `json:"rows,omitempty"`
+}
+
 func inspectReference(root string, registry protocol.Registry, ref string, artifacts []model.ArtifactRecord, commitments map[string]model.Commitment, evidenceItems []model.Evidence, assessments []model.Assessment, imports []model.ImportRecord) (inspectView, error) {
 	artifactByCID := artifactIndexByCID(artifacts)
 
@@ -2439,12 +2519,21 @@ func buildProvenanceRows(imports []model.ImportRecord, artifacts []model.Artifac
 }
 
 func buildReconcileRows(root string, registry protocol.Registry, policy trust.Policy, imports []model.ImportRecord, artifacts []model.ArtifactRecord, artifactCID string, sourcePath string, signer string, receiptSigner string, mode string, protocolPCID string) []reconcileRow {
+	return buildReconcileRowsForSet(root, registry, policy, imports, artifacts, nil, artifactCID, sourcePath, signer, receiptSigner, mode, protocolPCID)
+}
+
+func buildReconcileRowsForSet(root string, registry protocol.Registry, policy trust.Policy, imports []model.ImportRecord, artifacts []model.ArtifactRecord, allowedArtifactCIDs map[string]struct{}, artifactCID string, sourcePath string, signer string, receiptSigner string, mode string, protocolPCID string) []reconcileRow {
 	artifactIndex := artifactIndexByCID(artifacts)
 	receiptsByArtifact := receiptArtifactsByImportedArtifact(artifacts)
 	rowsByArtifact := map[string]*reconcileRow{}
 
 	for i := len(imports) - 1; i >= 0; i-- {
 		record := imports[i]
+		if len(allowedArtifactCIDs) > 0 {
+			if _, ok := allowedArtifactCIDs[record.ArtifactCID]; !ok {
+				continue
+			}
+		}
 		if artifactCID != "" && record.ArtifactCID != artifactCID {
 			continue
 		}
@@ -2579,6 +2668,48 @@ func buildReconcileRows(root string, registry protocol.Registry, policy trust.Po
 		return rows[i].LatestImportAt > rows[j].LatestImportAt
 	})
 	return rows
+}
+
+func buildCommitmentReconcileView(root string, registry protocol.Registry, policy trust.Policy, commitments map[string]model.Commitment, evidenceItems []model.Evidence, assessments []model.Assessment, imports []model.ImportRecord, artifacts []model.ArtifactRecord, commitmentID string, sourcePath string, signer string, receiptSigner string, mode string, protocolPCID string) (commitmentReconcileView, error) {
+	commitmentItem, ok := commitments[commitmentID]
+	if !ok {
+		return commitmentReconcileView{}, fmt.Errorf("unknown commitment %q", commitmentID)
+	}
+	artifactSet := map[string]struct{}{}
+	if commitmentItem.ArtifactCID != "" {
+		artifactSet[commitmentItem.ArtifactCID] = struct{}{}
+	}
+	for _, item := range evidenceItems {
+		if item.CommitmentID == commitmentID && item.ArtifactCID != "" {
+			artifactSet[item.ArtifactCID] = struct{}{}
+		}
+	}
+	for _, item := range assessments {
+		if item.CommitmentID == commitmentID && item.ArtifactCID != "" {
+			artifactSet[item.ArtifactCID] = struct{}{}
+		}
+	}
+	rows := buildReconcileRowsForSet(root, registry, policy, imports, artifacts, artifactSet, "", sourcePath, signer, receiptSigner, mode, protocolPCID)
+	view := commitmentReconcileView{
+		CommitmentID: commitmentItem.CommitmentID,
+		Status:       commitmentItem.Status,
+		Promiser:     commitmentItem.Promiser,
+		Repo:         commitmentItem.Repo,
+		Branch:       commitmentItem.Branch,
+		Targets:      append([]string(nil), commitmentItem.Targets...),
+		Rows:         rows,
+	}
+	for _, row := range rows {
+		view.ImportedArtifactCount++
+		switch row.Kind {
+		case "commitment_evidence":
+			view.ImportedEvidenceCount++
+		case "commitment_assessment":
+			view.ImportedAssessmentCount++
+		}
+		view.ReceiptArtifacts += row.ReceiptCount
+	}
+	return view, nil
 }
 
 func filterReceiptArtifacts(items []model.ArtifactRecord, signer string) []model.ArtifactRecord {
@@ -3081,6 +3212,21 @@ func printReconcileRows(rows []reconcileRow) {
 		}
 		fmt.Println()
 	}
+}
+
+func printCommitmentReconcileView(view commitmentReconcileView) {
+	fmt.Printf("Commitment ID: %s\n", view.CommitmentID)
+	fmt.Printf("Status: %s\n", view.Status)
+	fmt.Printf("Promiser: %s\n", view.Promiser)
+	fmt.Printf("Repo: %s\n", view.Repo)
+	fmt.Printf("Branch: %s\n", view.Branch)
+	fmt.Printf("Targets: %s\n", emptyFallback(strings.Join(view.Targets, ", "), "(none)"))
+	fmt.Printf("Imported Artifacts: %d\n", view.ImportedArtifactCount)
+	fmt.Printf("Imported Evidence Artifacts: %d\n", view.ImportedEvidenceCount)
+	fmt.Printf("Imported Assessment Artifacts: %d\n", view.ImportedAssessmentCount)
+	fmt.Printf("Receipt Artifacts: %d\n", view.ReceiptArtifacts)
+	fmt.Println()
+	printReconcileRows(view.Rows)
 }
 
 func printInspectView(view inspectView) {

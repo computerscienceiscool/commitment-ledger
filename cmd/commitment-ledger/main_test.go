@@ -1616,6 +1616,51 @@ func TestRunProvenanceFiltersByReceiptSignerAndProtocolPCID(t *testing.T) {
 	}
 }
 
+func TestRunReceiveDuplicateBundlesProducesDuplicateReceipts(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	inbox := filepath.Join(root, "peer-inbox")
+	firstPath := filepath.Join(inbox, "bundle-a.json")
+	secondPath := filepath.Join(inbox, "bundle-b.json")
+	writeBundle(t, firstPath, bundle)
+	writeBundle(t, secondPath, bundle)
+	if err := runReceive(root, store, registry, time.Date(2026, 6, 25, 0, 15, 0, 0, time.FixedZone("PDT", -7*3600)), []string{"--inbox", inbox}); err != nil {
+		t.Fatalf("runReceive: %v", err)
+	}
+
+	out := captureStdout(t, func() error {
+		return runReconcile(root, store, registry, []string{"--artifact", bundle.Artifact.ArtifactCID})
+	})
+	for _, fragment := range []string{
+		"Import Count: 2",
+		"Multiple Sources: yes",
+		"Receipt Count: 2",
+		"Receipt Signers: commitment-ledger",
+	} {
+		if !strings.Contains(out, fragment) {
+			t.Fatalf("duplicate receive reconcile output missing %q:\n%s", fragment, out)
+		}
+	}
+
+	statusOut := captureStdout(t, func() error {
+		return runStatus(root, store, []string{"--exchange"})
+	})
+	for _, fragment := range []string{
+		"Receipt artifacts: 2",
+		"Imported artifacts with receipts: 1",
+	} {
+		if !strings.Contains(statusOut, fragment) {
+			t.Fatalf("duplicate receive status output missing %q:\n%s", fragment, statusOut)
+		}
+	}
+}
+
 func TestRunReconcileShowsBundleReceiptChain(t *testing.T) {
 	exportRoot := t.TempDir()
 	copyProtocolDocs(t, exportRoot)
@@ -1744,6 +1789,132 @@ func TestRunReconcileShowsBundleReceiptChain(t *testing.T) {
 	}
 }
 
+func TestRunReconcileByCommitmentShowsImportedEvidenceAndAssessment(t *testing.T) {
+	exportRoot := t.TempDir()
+	copyProtocolDocs(t, exportRoot)
+	exportStore := ledger.NewStore(exportRoot)
+	exportRegistry, err := protocol.Load(exportRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load export: %v", err)
+	}
+
+	repoPath := filepath.Join(exportRoot, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(exportRoot, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+
+	now := time.Date(2026, 6, 25, 0, 40, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(exportRoot, exportStore, exportRegistry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan initial: %v", err)
+	}
+	if err := runCommit(exportRoot, exportStore, exportRegistry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+	commitment := latestCommitment(t, exportStore)
+	writeFixtureRepo(t, repoPath, true)
+	gitCommitAll(t, repoPath, "Complete subtask 1")
+	if err := runScan(exportRoot, exportStore, exportRegistry, now.Add(2*time.Hour), []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan second: %v", err)
+	}
+	evidenceItem := latestEvidenceByType(t, exportStore, model.EvidenceTypeTodoChecked)
+	if err := runAssess(exportRoot, exportStore, exportRegistry, now.Add(3*time.Hour), []string{
+		"--commitment", commitment.CommitmentID,
+		"--assessor", "Alice",
+		"--status", model.StatusKept,
+		"--basis", evidenceItem.EvidenceID,
+		"--notes", "Completed before the due date.",
+	}); err != nil {
+		t.Fatalf("runAssess: %v", err)
+	}
+	assessment := latestAssessment(t, exportStore)
+	commitmentBundlePath := filepath.Join(exportRoot, "exports", "commitment.json")
+	if err := runExport(exportRoot, exportStore, exportRegistry, now.Add(3*time.Hour+30*time.Minute), []string{"--out", commitmentBundlePath, commitment.CommitmentID}); err != nil {
+		t.Fatalf("runExport commitment: %v", err)
+	}
+	inbox := filepath.Join(exportRoot, "inbox")
+	evidenceBundlePath := filepath.Join(inbox, "evidence.json")
+	assessmentBundlePath := filepath.Join(inbox, "assessment.json")
+	if err := runExport(exportRoot, exportStore, exportRegistry, now.Add(4*time.Hour), []string{"--out", evidenceBundlePath, evidenceItem.EvidenceID}); err != nil {
+		t.Fatalf("runExport evidence: %v", err)
+	}
+	if err := runExport(exportRoot, exportStore, exportRegistry, now.Add(4*time.Hour), []string{"--out", assessmentBundlePath, assessment.AssessmentID}); err != nil {
+		t.Fatalf("runExport assessment: %v", err)
+	}
+
+	importRoot := t.TempDir()
+	copyProtocolDocs(t, importRoot)
+	importStore := ledger.NewStore(importRoot)
+	importRegistry, err := protocol.Load(importRoot)
+	if err != nil {
+		t.Fatalf("protocol.Load import: %v", err)
+	}
+	writeTrustPolicy(t, importRoot, map[string]any{
+		"trust_built_in_signers":       false,
+		"trust_built_in_protocols":     false,
+		"trusted_signers":              []string{"Alice"},
+		"trusted_protocol_pcids":       []string{commitment.ProtocolPCID, evidenceItem.ProtocolPCID, assessment.ProtocolPCID},
+		"trusted_import_modes":         []string{"import", "receive"},
+		"trusted_import_path_prefixes": []string{filepath.Join(exportRoot, "exports"), inbox},
+	})
+	if err := runImportAt(importRoot, importStore, importRegistry, now.Add(5*time.Hour), []string{"--in", commitmentBundlePath}); err != nil {
+		t.Fatalf("runImportAt commitment: %v", err)
+	}
+	archive := filepath.Join(importRoot, "archive")
+	if err := runReceive(importRoot, importStore, importRegistry, now.Add(5*time.Hour+time.Minute), []string{"--inbox", inbox, "--archive", archive}); err != nil {
+		t.Fatalf("runReceive: %v", err)
+	}
+
+	textOut := captureStdout(t, func() error {
+		return runReconcile(importRoot, importStore, importRegistry, []string{"--commitment", commitment.CommitmentID})
+	})
+	for _, fragment := range []string{
+		"Commitment ID: " + commitment.CommitmentID,
+		"Status: kept",
+		"Imported Artifacts: 3",
+		"Imported Evidence Artifacts: 1",
+		"Imported Assessment Artifacts: 1",
+		"Receipt Artifacts: 2",
+		"Related ID: " + evidenceItem.EvidenceID,
+		"Related ID: " + assessment.AssessmentID,
+	} {
+		if !strings.Contains(textOut, fragment) {
+			t.Fatalf("commitment reconcile output missing %q:\n%s", fragment, textOut)
+		}
+	}
+
+	jsonOut := captureStdout(t, func() error {
+		return runReconcile(importRoot, importStore, importRegistry, []string{"--commitment", commitment.CommitmentID, "--json"})
+	})
+	for _, fragment := range []string{
+		"\"commitment_id\": " + strconv.Quote(commitment.CommitmentID),
+		"\"imported_artifact_count\": 3",
+		"\"imported_evidence_count\": 1",
+		"\"imported_assessment_count\": 1",
+		"\"receipt_artifacts\": 2",
+	} {
+		if !strings.Contains(jsonOut, fragment) {
+			t.Fatalf("commitment reconcile json output missing %q:\n%s", fragment, jsonOut)
+		}
+	}
+}
+
 func TestRunIdentityRotateArchivesAndReplacesKey(t *testing.T) {
 	root := t.TempDir()
 	if _, _, _, err := identity.LoadOrCreate(root, "Alice"); err != nil {
@@ -1771,6 +1942,68 @@ func TestRunIdentityRotateArchivesAndReplacesKey(t *testing.T) {
 	archivePath := filepath.Join(root, "config", "identities", "archive", "alice-"+before.KeyID+".json")
 	if _, err := os.Stat(archivePath); err != nil {
 		t.Fatalf("expected archived identity: %v", err)
+	}
+}
+
+func TestRunRepairImportArtifactsFailsOnMalformedBundleSource(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	bundlePath := filepath.Join(root, "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+	now := time.Date(2026, 6, 25, 1, 0, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runImportAt(root, store, registry, now, []string{"--in", bundlePath}); err != nil {
+		t.Fatalf("runImportAt: %v", err)
+	}
+	if err := os.Remove(store.CAS.Path(bundle.Artifact.ArtifactCID)); err != nil {
+		t.Fatalf("remove artifact cas: %v", err)
+	}
+	if err := os.WriteFile(bundlePath, []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("overwrite bundle: %v", err)
+	}
+
+	_, repairErr := captureStdoutWithError(t, func() error {
+		return runRepair(root, store, registry, []string{"--import-artifacts"})
+	})
+	if repairErr == nil || !strings.Contains(repairErr.Error(), "parse import bundle") {
+		t.Fatalf("runRepair error = %v, want parse import bundle failure", repairErr)
+	}
+}
+
+func TestRunRepairImportArtifactsFailsWhenSourcePathWasReused(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	bundlePath := filepath.Join(root, "bundle.json")
+	first := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	writeBundle(t, bundlePath, first)
+	now := time.Date(2026, 6, 25, 1, 10, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runImportAt(root, store, registry, now, []string{"--in", bundlePath}); err != nil {
+		t.Fatalf("runImportAt first: %v", err)
+	}
+	second := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc 2"), "Eve")
+	writeBundle(t, bundlePath, second)
+	if err := runImportAt(root, store, registry, now.Add(time.Minute), []string{"--in", bundlePath}); err != nil {
+		t.Fatalf("runImportAt second: %v", err)
+	}
+	if err := os.Remove(store.CAS.Path(first.Artifact.ArtifactCID)); err != nil {
+		t.Fatalf("remove first artifact cas: %v", err)
+	}
+
+	_, repairErr := captureStdoutWithError(t, func() error {
+		return runRepair(root, store, registry, []string{"--import-artifacts"})
+	})
+	if repairErr == nil || !strings.Contains(repairErr.Error(), "artifact mismatch") {
+		t.Fatalf("runRepair error = %v, want artifact mismatch failure", repairErr)
 	}
 }
 
@@ -2121,6 +2354,69 @@ func TestRunIdentityRestoreRestoresCurrentAndArchivedKeys(t *testing.T) {
 	}
 	if len(archived) != 1 || archived[0].KeyID != "alice-ed25519-v1" {
 		t.Fatalf("restored archived identities = %#v, want one v1 archived key", archived)
+	}
+}
+
+func TestRunIdentityRestoreReportsConflictAndPartialSuccess(t *testing.T) {
+	sourceRoot := t.TempDir()
+	if _, _, _, err := identity.LoadOrCreate(sourceRoot, "Alice"); err != nil {
+		t.Fatalf("LoadOrCreate: %v", err)
+	}
+	if err := runIdentity(sourceRoot, []string{"rotate", "--name", "Alice"}); err != nil {
+		t.Fatalf("runIdentity rotate: %v", err)
+	}
+	backupPath := filepath.Join(sourceRoot, "backups", "alice-identities.json")
+	if err := runIdentity(sourceRoot, []string{"backup", "--out", backupPath, "Alice"}); err != nil {
+		t.Fatalf("runIdentity backup: %v", err)
+	}
+
+	restoreRoot := t.TempDir()
+	if _, _, _, err := identity.LoadOrCreate(restoreRoot, "Alice"); err != nil {
+		t.Fatalf("LoadOrCreate restore root: %v", err)
+	}
+	out, restoreErr := captureStdoutWithError(t, func() error {
+		return runIdentity(restoreRoot, []string{"restore", "--in", backupPath, "Alice"})
+	})
+	if restoreErr == nil || !strings.Contains(restoreErr.Error(), "completed with 1 conflict") {
+		t.Fatalf("runIdentity restore error = %v, want conflict summary", restoreErr)
+	}
+	for _, fragment := range []string{
+		"Restored current identities: 0",
+		"Restored archived identities: 1",
+		"Skipped current identities: 0",
+		"Skipped archived identities: 0",
+		"Partial restore: yes",
+		"Conflicts: 1",
+		"Conflict: current Alice",
+	} {
+		if !strings.Contains(out, fragment) {
+			t.Fatalf("identity restore output missing %q:\n%s", fragment, out)
+		}
+	}
+
+	jsonOut, jsonErr := captureStdoutWithError(t, func() error {
+		return runIdentity(restoreRoot, []string{"restore", "--in", backupPath, "--json", "Alice"})
+	})
+	if jsonErr == nil || !strings.Contains(jsonErr.Error(), "completed with 1 conflict") {
+		t.Fatalf("runIdentity restore --json error = %v, want conflict summary", jsonErr)
+	}
+	for _, fragment := range []string{
+		"\"restored_current\": 0",
+		"\"restored_archived\": 0",
+		"\"partial\": true",
+		"\"conflicts\": [",
+	} {
+		if !strings.Contains(jsonOut, fragment) {
+			t.Fatalf("identity restore json output missing %q:\n%s", fragment, jsonOut)
+		}
+	}
+
+	archived, err := loadArchivedIdentityInfos(restoreRoot, "Alice")
+	if err != nil {
+		t.Fatalf("loadArchivedIdentityInfos restored: %v", err)
+	}
+	if len(archived) != 1 || archived[0].KeyID != "alice-ed25519-v1" {
+		t.Fatalf("restored archived identities after conflict = %#v, want one v1 archived key", archived)
 	}
 }
 
