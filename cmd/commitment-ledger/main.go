@@ -2115,13 +2115,9 @@ func restoreImportedArtifacts(store *ledger.Store) (int, error) {
 		if _, err := store.CAS.Get(record.ArtifactCID); err == nil {
 			continue
 		}
-		data, err := os.ReadFile(record.SourcePath)
+		bundle, _, err := loadBundleForRecovery(record.SourcePath)
 		if err != nil {
-			return restored, fmt.Errorf("read import bundle %q for %s: %w", record.SourcePath, record.ArtifactCID, err)
-		}
-		bundle, err := exchange.ParseBundle(data)
-		if err != nil {
-			return restored, fmt.Errorf("parse import bundle %q for %s: %w", record.SourcePath, record.ArtifactCID, err)
+			return restored, fmt.Errorf("load import bundle %q for %s: %w", record.SourcePath, record.ArtifactCID, err)
 		}
 		if bundle.Artifact.ArtifactCID != record.ArtifactCID {
 			return restored, fmt.Errorf("bundle %q artifact mismatch: import=%s bundle=%s", record.SourcePath, record.ArtifactCID, bundle.Artifact.ArtifactCID)
@@ -2195,15 +2191,38 @@ func restoreImportedSupport(root string, store *ledger.Store) (int, int, error) 
 }
 
 func parseBundleAtPath(path string) (exchange.Bundle, error) {
-	data, err := os.ReadFile(path)
+	data, err := readBundleFileForRecovery(path)
 	if err != nil {
-		return exchange.Bundle{}, fmt.Errorf("read import bundle %q: %w", path, err)
+		return exchange.Bundle{}, err
 	}
 	bundle, err := exchange.ParseBundle(data)
 	if err != nil {
 		return exchange.Bundle{}, fmt.Errorf("parse import bundle %q: %w", path, err)
 	}
 	return bundle, nil
+}
+
+func readBundleFileForRecovery(path string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("saved bundle path %q is missing; recover the original bundle or re-import/export it from another repo", path)
+		}
+		return nil, fmt.Errorf("read import bundle %q: %w", path, err)
+	}
+	return data, nil
+}
+
+func loadBundleForRecovery(path string) (exchange.Bundle, []byte, error) {
+	data, err := readBundleFileForRecovery(path)
+	if err != nil {
+		return exchange.Bundle{}, nil, err
+	}
+	bundle, err := exchange.ParseBundle(data)
+	if err != nil {
+		return exchange.Bundle{}, nil, fmt.Errorf("parse import bundle %q: %w", path, err)
+	}
+	return bundle, data, nil
 }
 
 func repairIdentityLineage(root string) (int, error) {
@@ -3854,6 +3873,7 @@ func doctorReport(root string, store *ledger.Store, registry protocol.Registry) 
 	importedArtifacts := map[string]struct{}{}
 	importedProtocols := map[string]struct{}{}
 	importedSigners := map[string]struct{}{}
+	bundlePathAvailable := map[string]bool{}
 	for _, record := range imports {
 		importedArtifacts[record.ArtifactCID] = struct{}{}
 		if record.InstalledProtocolPCID != "" {
@@ -3861,6 +3881,11 @@ func doctorReport(root string, store *ledger.Store, registry protocol.Registry) 
 		}
 		if record.InstalledSignerIdentity != "" {
 			importedSigners[record.InstalledSignerIdentity] = struct{}{}
+		}
+		if record.SourcePath != "" {
+			if _, seen := bundlePathAvailable[record.SourcePath]; !seen {
+				bundlePathAvailable[record.SourcePath] = !statFileMissing(record.SourcePath)
+			}
 		}
 	}
 	artifacts, err := store.LoadArtifacts()
@@ -3872,10 +3897,13 @@ func doctorReport(root string, store *ledger.Store, registry protocol.Registry) 
 		envelope, err := store.CAS.Get(artifact.ArtifactCID)
 		if err != nil {
 			message := fmt.Sprintf("artifact %s missing CAS bytes: %v", artifact.ArtifactCID, err)
-			_, repairable := importedArtifacts[artifact.ArtifactCID]
+			_, imported := importedArtifacts[artifact.ArtifactCID]
+			repairable := imported && importedArtifactRecoverable(imports, artifact.ArtifactCID, bundlePathAvailable)
 			hint := ""
 			if repairable {
 				hint = "run repair --import-artifacts to restore missing imported artifact envelopes from saved bundle paths"
+			} else if imported {
+				hint = "saved bundle path is missing; recover the original bundle or re-import/export it from another repo"
 			}
 			addDoctorError(&summary, message, repairable, hint)
 			continue
@@ -3901,19 +3929,19 @@ func doctorReport(root string, store *ledger.Store, registry protocol.Registry) 
 			addDoctorError(&summary, fmt.Sprintf("artifact %s signer lineage unknown: %v", artifact.ArtifactCID, err), false, "")
 		}
 	}
-	if err := doctorIdentityDir(root, filepath.Join(root, "config", "identities"), true, &summary, importedSigners); err != nil {
+	if err := doctorIdentityDir(root, filepath.Join(root, "config", "identities"), true, &summary, importedSigners, imports, bundlePathAvailable); err != nil {
 		return summary, err
 	}
 	if err := doctorArchivedIdentities(root, &summary); err != nil {
 		return summary, err
 	}
-	if err := doctorIdentityDir(root, filepath.Join(root, "config", "imported-identities"), false, &summary, importedSigners); err != nil {
+	if err := doctorIdentityDir(root, filepath.Join(root, "config", "imported-identities"), false, &summary, importedSigners, imports, bundlePathAvailable); err != nil {
 		return summary, err
 	}
-	if err := doctorImportedProtocols(root, &summary, importedProtocols); err != nil {
+	if err := doctorImportedProtocols(root, &summary, importedProtocols, imports, bundlePathAvailable); err != nil {
 		return summary, err
 	}
-	checkExpectedImportedSupport(root, &summary, importedProtocols, importedSigners)
+	checkExpectedImportedSupport(root, &summary, importedProtocols, importedSigners, imports, bundlePathAvailable)
 	if _, err := os.Stat(changelog.Path(root)); err != nil {
 		if os.IsNotExist(err) {
 			summary.Warnings = append(summary.Warnings, "CHANGELOG.md not found")
@@ -3960,7 +3988,7 @@ func appendRepairAction(actions []string, flag string) []string {
 	return actions
 }
 
-func doctorIdentityDir(root string, dir string, primary bool, summary *doctorSummary, importedSigners map[string]struct{}) error {
+func doctorIdentityDir(root string, dir string, primary bool, summary *doctorSummary, importedSigners map[string]struct{}, imports []model.ImportRecord, bundlePathAvailable map[string]bool) error {
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
 		return nil
@@ -3986,10 +4014,13 @@ func doctorIdentityDir(root string, dir string, primary bool, summary *doctorSum
 			continue
 		}
 		if _, _, err := identity.LoadVerifier(root, name); err != nil {
-			_, repairable := importedSigners[name]
+			_, imported := importedSigners[name]
+			repairable := imported && importedSignerRecoverable(imports, name, bundlePathAvailable)
 			hint := ""
 			if repairable {
 				hint = "run repair --import-support to restore imported signer support files from saved bundle paths"
+			} else if imported {
+				hint = "saved bundle path is missing; recover the original bundle or re-import/export it from another repo"
 			}
 			addDoctorError(summary, fmt.Sprintf("imported identity %s invalid: %v", name, err), repairable, hint)
 			continue
@@ -4088,7 +4119,7 @@ func findArchivedIdentityPathByNameAndKey(root string, name string, keyID string
 	return "", nil
 }
 
-func doctorImportedProtocols(root string, summary *doctorSummary, importedProtocols map[string]struct{}) error {
+func doctorImportedProtocols(root string, summary *doctorSummary, importedProtocols map[string]struct{}, imports []model.ImportRecord, bundlePathAvailable map[string]bool) error {
 	dir := filepath.Join(root, "data", "imported-protocols")
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
@@ -4104,29 +4135,38 @@ func doctorImportedProtocols(root string, summary *doctorSummary, importedProtoc
 		pcid := strings.TrimSuffix(entry.Name(), ".json")
 		support, err := loadImportedProtocolSupport(root, pcid)
 		if err != nil {
-			_, repairable := importedProtocols[pcid]
+			_, imported := importedProtocols[pcid]
+			repairable := imported && importedProtocolRecoverable(imports, pcid, bundlePathAvailable)
 			hint := ""
 			if repairable {
 				hint = "run repair --import-support to restore imported protocol support files from saved bundle paths"
+			} else if imported {
+				hint = "saved bundle path is missing; recover the original bundle or re-import/export it from another repo"
 			}
 			addDoctorError(summary, fmt.Sprintf("imported protocol %s metadata invalid: %v", pcid, err), repairable, hint)
 			continue
 		}
 		data, err := os.ReadFile(importedProtocolDocPath(root, pcid))
 		if err != nil {
-			_, repairable := importedProtocols[pcid]
+			_, imported := importedProtocols[pcid]
+			repairable := imported && importedProtocolRecoverable(imports, pcid, bundlePathAvailable)
 			hint := ""
 			if repairable {
 				hint = "run repair --import-support to restore imported protocol support files from saved bundle paths"
+			} else if imported {
+				hint = "saved bundle path is missing; recover the original bundle or re-import/export it from another repo"
 			}
 			addDoctorError(summary, fmt.Sprintf("imported protocol %s doc missing: %v", pcid, err), repairable, hint)
 			continue
 		}
 		if got := protocol.SupportPCID(data); got != support.ProtocolPCID {
-			_, repairable := importedProtocols[pcid]
+			_, imported := importedProtocols[pcid]
+			repairable := imported && importedProtocolRecoverable(imports, pcid, bundlePathAvailable)
 			hint := ""
 			if repairable {
 				hint = "run repair --import-support to restore imported protocol support files from saved bundle paths"
+			} else if imported {
+				hint = "saved bundle path is missing; recover the original bundle or re-import/export it from another repo"
 			}
 			addDoctorError(summary, fmt.Sprintf("imported protocol %s pCID mismatch", pcid), repairable, hint)
 			continue
@@ -4136,20 +4176,57 @@ func doctorImportedProtocols(root string, summary *doctorSummary, importedProtoc
 	return nil
 }
 
-func checkExpectedImportedSupport(root string, summary *doctorSummary, importedProtocols map[string]struct{}, importedSigners map[string]struct{}) {
+func checkExpectedImportedSupport(root string, summary *doctorSummary, importedProtocols map[string]struct{}, importedSigners map[string]struct{}, imports []model.ImportRecord, bundlePathAvailable map[string]bool) {
 	for pcid := range importedProtocols {
 		metaPath := importedProtocolMetaPath(root, pcid)
 		docPath := importedProtocolDocPath(root, pcid)
 		if _, err := os.Stat(metaPath); err != nil || statFileMissing(docPath) {
-			addDoctorError(summary, fmt.Sprintf("imported protocol %s support files missing", pcid), true, "run repair --import-support to restore imported protocol support files from saved bundle paths")
+			repairable := importedProtocolRecoverable(imports, pcid, bundlePathAvailable)
+			hint := "saved bundle path is missing; recover the original bundle or re-import/export it from another repo"
+			if repairable {
+				hint = "run repair --import-support to restore imported protocol support files from saved bundle paths"
+			}
+			addDoctorError(summary, fmt.Sprintf("imported protocol %s support files missing", pcid), repairable, hint)
 		}
 	}
 	for name := range importedSigners {
 		path := filepath.Join(root, "config", "imported-identities", importedIdentityFilename(name))
 		if statFileMissing(path) {
-			addDoctorError(summary, fmt.Sprintf("imported identity %s support file missing", name), true, "run repair --import-support to restore imported signer support files from saved bundle paths")
+			repairable := importedSignerRecoverable(imports, name, bundlePathAvailable)
+			hint := "saved bundle path is missing; recover the original bundle or re-import/export it from another repo"
+			if repairable {
+				hint = "run repair --import-support to restore imported signer support files from saved bundle paths"
+			}
+			addDoctorError(summary, fmt.Sprintf("imported identity %s support file missing", name), repairable, hint)
 		}
 	}
+}
+
+func importedArtifactRecoverable(imports []model.ImportRecord, artifactCID string, bundlePathAvailable map[string]bool) bool {
+	for _, record := range imports {
+		if record.ArtifactCID == artifactCID && bundlePathAvailable[record.SourcePath] {
+			return true
+		}
+	}
+	return false
+}
+
+func importedProtocolRecoverable(imports []model.ImportRecord, pcid string, bundlePathAvailable map[string]bool) bool {
+	for _, record := range imports {
+		if record.InstalledProtocolPCID == pcid && bundlePathAvailable[record.SourcePath] {
+			return true
+		}
+	}
+	return false
+}
+
+func importedSignerRecoverable(imports []model.ImportRecord, name string, bundlePathAvailable map[string]bool) bool {
+	for _, record := range imports {
+		if record.InstalledSignerIdentity == name && bundlePathAvailable[record.SourcePath] {
+			return true
+		}
+	}
+	return false
 }
 
 func expectedIdentityKeyID(name string, version int) string {

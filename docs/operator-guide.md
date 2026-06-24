@@ -444,6 +444,10 @@ local. Those remain manual recovery cases.
 It still does not resolve projection conflicts or synthesize bundle sources that
 no longer exist locally.
 
+When a saved bundle path is gone, `doctor` now treats that as a non-repairable
+automation gap and tells you to recover the original bundle or re-import/export
+it from another repo before retrying `repair`.
+
 ### `identity`
 
 ```bash

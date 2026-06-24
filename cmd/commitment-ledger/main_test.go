@@ -1529,6 +1529,49 @@ func TestRunDoctorRepairableHintsImportedArtifactCAS(t *testing.T) {
 	}
 }
 
+func TestDoctorMissingImportedArtifactBundlePathIsNotRepairable(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	bundlePath := filepath.Join(root, "peer-inbox", "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+	now := time.Date(2026, 6, 25, 1, 45, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runImportAt(root, store, registry, now, []string{"--in", bundlePath}); err != nil {
+		t.Fatalf("runImportAt: %v", err)
+	}
+	if err := os.Remove(store.CAS.Path(bundle.Artifact.ArtifactCID)); err != nil {
+		t.Fatalf("remove imported artifact CAS: %v", err)
+	}
+	if err := os.Remove(bundlePath); err != nil {
+		t.Fatalf("remove bundle path: %v", err)
+	}
+
+	doctorOut, doctorErr := captureStdoutWithError(t, func() error {
+		return runDoctor(root, store, registry, []string{"--repairable"})
+	})
+	if doctorErr == nil || !strings.Contains(doctorErr.Error(), "doctor found 1 error") {
+		t.Fatalf("runDoctor --repairable error = %v, want doctor failure", doctorErr)
+	}
+	if !strings.Contains(doctorOut, "Repairable Errors: 0") ||
+		!strings.Contains(doctorOut, "Non-repairable Errors: 1") ||
+		!strings.Contains(doctorOut, "saved bundle path is missing; recover the original bundle or re-import/export it from another repo") {
+		t.Fatalf("unexpected doctor output for missing bundle path:\n%s", doctorOut)
+	}
+
+	report, err := doctorReport(root, store, registry)
+	if err != nil {
+		t.Fatalf("doctorReport: %v", err)
+	}
+	if len(report.RepairableErrors) != 0 || len(report.NonRepairableErrors) != 1 {
+		t.Fatalf("unexpected doctor report classification: %#v", report)
+	}
+}
+
 func TestRunProvenanceShowsReceiveHistoryAndReceipts(t *testing.T) {
 	root := t.TempDir()
 	copyProtocolDocs(t, root)
@@ -2004,6 +2047,53 @@ func TestRunRepairImportArtifactsFailsWhenSourcePathWasReused(t *testing.T) {
 	})
 	if repairErr == nil || !strings.Contains(repairErr.Error(), "artifact mismatch") {
 		t.Fatalf("runRepair error = %v, want artifact mismatch failure", repairErr)
+	}
+}
+
+func TestRunRepairImportSupportFailsWhenBundlePathIsMissing(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+	bundle := syntheticBundle(t, root, "external-protocol-v1", []byte("external protocol doc"), "Mallory")
+	bundlePath := filepath.Join(root, "peer-inbox", "bundle.json")
+	writeBundle(t, bundlePath, bundle)
+	now := time.Date(2026, 6, 25, 1, 55, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runImportAt(root, store, registry, now, []string{"--in", bundlePath}); err != nil {
+		t.Fatalf("runImportAt: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, "config", "imported-identities", importedIdentityFilename(bundle.Signer.Name))); err != nil {
+		t.Fatalf("remove imported identity support: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, "data", "imported-protocols", bundle.Protocol.ProtocolPCID+".json")); err != nil {
+		t.Fatalf("remove imported protocol meta: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, "data", "imported-protocols", bundle.Protocol.ProtocolPCID+".md")); err != nil {
+		t.Fatalf("remove imported protocol doc: %v", err)
+	}
+	if err := os.Remove(bundlePath); err != nil {
+		t.Fatalf("remove bundle path: %v", err)
+	}
+
+	doctorOut, doctorErr := captureStdoutWithError(t, func() error {
+		return runDoctor(root, store, registry, []string{"--repairable"})
+	})
+	if doctorErr == nil || !strings.Contains(doctorErr.Error(), "doctor found 2 error") {
+		t.Fatalf("runDoctor --repairable error = %v, want doctor failure", doctorErr)
+	}
+	if !strings.Contains(doctorOut, "Repairable Errors: 0") ||
+		!strings.Contains(doctorOut, "saved bundle path is missing; recover the original bundle or re-import/export it from another repo") {
+		t.Fatalf("unexpected doctor repairable output for missing support bundle:\n%s", doctorOut)
+	}
+
+	_, repairErr := captureStdoutWithError(t, func() error {
+		return runRepair(root, store, registry, []string{"--import-support"})
+	})
+	if repairErr == nil || !strings.Contains(repairErr.Error(), "saved bundle path") {
+		t.Fatalf("runRepair error = %v, want missing saved bundle path failure", repairErr)
 	}
 }
 

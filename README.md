@@ -188,6 +188,7 @@ Observed work targets are always branch-qualified, for example
 - `repair --json` emits machine-readable counts for each applied recovery step.
 - `repair --import-support` restores imported signer and protocol support files from recorded bundle source paths when those support files have gone missing.
 - `repair` rebuilds Markdown records from JSONL state, restores built-in frozen protocol docs into local CAS, and can restore missing imported artifact envelopes from recorded bundle source paths.
+- if those recorded bundle source paths are gone, `doctor` now classifies the issue as non-repairable by automation and points you at recovering the original bundle or re-importing/exporting it from another repo
 - `identity list`, `identity show`, `identity history`, `identity backup`, `identity restore`, and `identity rotate` provide a basic local signer lifecycle workflow with archive copies of rotated keys; `identity backup --include-imported-support` can also preserve imported signer/protocol support, and `identity restore` reports partial success, skipped identical files, and explicit conflicts when local material differs from the backup.
 
 ## Backup And Recovery
