@@ -533,7 +533,9 @@ exchange-receipt-v1</code></pre>
         </div>
         <p>
           The CLI stays readable by default, but it also supports machine-readable
-          JSON, local bundle exchange, and recovery-oriented workflows.
+          JSON, local bundle exchange, and recovery-oriented workflows. Build the
+          repo-local binary once, then these commands work as shown from the repo
+          root.
         </p>
       </div>
 
@@ -542,16 +544,18 @@ exchange-receipt-v1</code></pre>
           <span class="terminal-dot"></span>
           <span>examples</span>
         </div>
-        <pre><code>commitment-ledger scan --config config/repos.demo.json
-commitment-ledger commit --promiser Alice --repo alice-demo --branch main --target alice-demo/main/TODO-ravud/1 --due 2026-07-01 --promise "I promise to complete TODO-ravud subtask 1."
-commitment-ledger inspect --json COMMITMENT-...
-commitment-ledger verify --json ASSESSMENT-...
-commitment-ledger status --exchange --json
-commitment-ledger report --imports --json
-commitment-ledger reconcile --commitment COMMITMENT-... --json
-commitment-ledger doctor --repairable
-commitment-ledger repair --json --import-artifacts --import-support --identity-lineage
-commitment-ledger identity backup --include-imported-support --out /safe/path/identities.json</code></pre>
+        <pre><code>make build
+make demo-setup
+./bin/commitment-ledger scan --config config/repos.demo.json
+./bin/commitment-ledger commit --promiser Alice --repo alice-demo --branch main --target alice-demo/main/TODO-ravud/1 --due 2026-07-01 --promise "I promise to complete TODO-ravud subtask 1."
+./bin/commitment-ledger inspect --json COMMITMENT-...
+./bin/commitment-ledger verify --json ASSESSMENT-...
+./bin/commitment-ledger status --exchange --json
+./bin/commitment-ledger report --imports --json
+./bin/commitment-ledger reconcile --commitment COMMITMENT-... --json
+./bin/commitment-ledger doctor --repairable
+./bin/commitment-ledger repair --json --import-artifacts --import-support --identity-lineage
+./bin/commitment-ledger identity backup --include-imported-support --out /safe/path/identities.json</code></pre>
       </div>
     </section>
 

@@ -50,37 +50,40 @@ For day-to-day operation after that first pass, the usual operator loop is:
 
 ## Commands
 
+Build the repo-local binary with `make build` and run `./bin/commitment-ledger ...`,
+or substitute `go run ./cmd/commitment-ledger ...` if you do not want to build first.
+
 ```text
-commitment-ledger scan --config config/repos.json
-commitment-ledger commit --promiser JJ --repo repo --branch main --target repo/main/TODO-abcd --due 2026-06-30 --promise "I promise ..."
-commitment-ledger evidence --commitment COMMITMENT-... --type manual_note --notes "Observed blocker"
-commitment-ledger assess --commitment COMMITMENT-... --assessor JJ --status kept --notes "Completed on time"
-commitment-ledger conformance --signer commitment-ledger --version v0.1.0 --write-changelog
-commitment-ledger expire
-commitment-ledger status
-commitment-ledger status --exchange
-commitment-ledger status --json
-commitment-ledger status --exchange --json
-commitment-ledger report --promiser JJ
-commitment-ledger report --imports
-commitment-ledger report --imports --json
-commitment-ledger inspect --json COMMITMENT-...
-commitment-ledger verify --json COMMITMENT-...
-commitment-ledger export --out /tmp/bundle.json COMMITMENT-...
-commitment-ledger import --in /tmp/bundle.json
-commitment-ledger provenance --mode receive --json
-commitment-ledger reconcile --commitment COMMITMENT-... --json
-commitment-ledger send --outbox /tmp/peer-outbox COMMITMENT-...
-commitment-ledger receive --inbox /tmp/peer-inbox --archive /tmp/peer-archive
-commitment-ledger doctor --json
-commitment-ledger doctor --repairable
-commitment-ledger doctor --strict
-commitment-ledger repair --json --import-artifacts --import-support --identity-lineage
-commitment-ledger identity list --json
-commitment-ledger identity history Alice --json
-commitment-ledger identity backup --include-imported-support --out /tmp/alice-identities.json Alice
-commitment-ledger identity restore --in /tmp/alice-identities.json Alice
-commitment-ledger identity rotate --name Alice
+./bin/commitment-ledger scan --config config/repos.json
+./bin/commitment-ledger commit --promiser JJ --repo repo --branch main --target repo/main/TODO-abcd --due 2026-06-30 --promise "I promise ..."
+./bin/commitment-ledger evidence --commitment COMMITMENT-... --type manual_note --notes "Observed blocker"
+./bin/commitment-ledger assess --commitment COMMITMENT-... --assessor JJ --status kept --notes "Completed on time"
+./bin/commitment-ledger conformance --signer commitment-ledger --version v0.1.0 --write-changelog
+./bin/commitment-ledger expire
+./bin/commitment-ledger status
+./bin/commitment-ledger status --exchange
+./bin/commitment-ledger status --json
+./bin/commitment-ledger status --exchange --json
+./bin/commitment-ledger report --promiser JJ
+./bin/commitment-ledger report --imports
+./bin/commitment-ledger report --imports --json
+./bin/commitment-ledger inspect --json COMMITMENT-...
+./bin/commitment-ledger verify --json COMMITMENT-...
+./bin/commitment-ledger export --out /tmp/bundle.json COMMITMENT-...
+./bin/commitment-ledger import --in /tmp/bundle.json
+./bin/commitment-ledger provenance --mode receive --json
+./bin/commitment-ledger reconcile --commitment COMMITMENT-... --json
+./bin/commitment-ledger send --outbox /tmp/peer-outbox COMMITMENT-...
+./bin/commitment-ledger receive --inbox /tmp/peer-inbox --archive /tmp/peer-archive
+./bin/commitment-ledger doctor --json
+./bin/commitment-ledger doctor --repairable
+./bin/commitment-ledger doctor --strict
+./bin/commitment-ledger repair --json --import-artifacts --import-support --identity-lineage
+./bin/commitment-ledger identity list --json
+./bin/commitment-ledger identity history Alice --json
+./bin/commitment-ledger identity backup --include-imported-support --out /tmp/alice-identities.json Alice
+./bin/commitment-ledger identity restore --in /tmp/alice-identities.json Alice
+./bin/commitment-ledger identity rotate --name Alice
 ```
 
 ## Make Targets
