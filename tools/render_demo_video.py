@@ -9,20 +9,23 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from textwrap import wrap
 
 from PIL import Image, ImageDraw, ImageFont
 
 
-ROOT = Path("/home/jj/lab/commitment-ledger")
-SOURCE_DEMO_REPOS = Path("/home/jj/lab/commitment-ledger-demo")
+ROOT = Path(__file__).resolve().parent.parent
+SOURCE_DEMO_REPOS = Path(
+    os.environ.get("COMMITMENT_LEDGER_DEMO_REPOS", str(ROOT.parent / "commitment-ledger-demo"))
+)
 OUTPUT_VIDEO = ROOT / "docs" / "demo-video.mp4"
 BUILD_ROOT = ROOT / ".demo-video-build"
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
 WIDTH = 1440
 HEIGHT = 900
 FPS = 2
-SECONDS_PER_STEP = 8
+SECONDS_PER_STEP = 10
 BG = "#0b1020"
 PANEL = "#111827"
 TERM_BG = "#0d1117"
@@ -31,6 +34,7 @@ MUTED = "#9ca3af"
 ACCENT = "#93c5fd"
 GREEN = "#86efac"
 YELLOW = "#fde68a"
+PINK = "#f9a8d4"
 
 
 @dataclass
@@ -62,6 +66,10 @@ def write_json(path: Path, payload: object) -> None:
 
 
 def prepare_workspace() -> Path:
+    if not SOURCE_DEMO_REPOS.exists():
+        raise RuntimeError(
+            f"demo repos not found at {SOURCE_DEMO_REPOS}; run 'make demo-setup' or set COMMITMENT_LEDGER_DEMO_REPOS"
+        )
     if BUILD_ROOT.exists():
         shutil.rmtree(BUILD_ROOT)
     workspace = BUILD_ROOT / "workspace"
@@ -121,6 +129,34 @@ def prepare_workspace() -> Path:
 
 def make_demo_steps(workspace: Path) -> list[Step]:
     steps: list[Step] = []
+
+    steps.append(
+        Step(
+            title="Commitment Ledger Demo",
+            commands=[
+                "Repo-first work",
+                "Promise against discovered TODO target",
+                "Evidence and later assessment",
+                "Inspect and verify signed artifacts",
+            ],
+            say=[
+                "This walkthrough stays inside seeded local repos and a local ledger workspace.",
+                "Watch for four layers: source work, promise, evidence, and final judgment.",
+                "Every terminal pane command is repo-relative to keep the flow copy-paste friendly.",
+            ],
+            output=(
+                "Goal\n"
+                "----\n"
+                "Show the shortest path from ordinary TODO work to a verifiable signed assessment artifact.\n\n"
+                "Flow\n"
+                "----\n"
+                "1. Observe repo work\n"
+                "2. Create a commitment\n"
+                "3. Capture evidence from repo changes\n"
+                "4. Assess and verify the result"
+            ),
+        )
+    )
 
     steps.append(
         Step(
@@ -372,6 +408,11 @@ def render_text(draw: ImageDraw.ImageDraw, text: str, xy: tuple[int, int], font:
     return y
 
 
+def is_shell_command(text: str) -> bool:
+    prefixes = ("./", "go ", "make ", "sed ", "grep ", "cat ", "git ", "python3 ")
+    return text.startswith(prefixes)
+
+
 def draw_step(step: Step, index: int, total: int, frame_path: Path) -> None:
     img = Image.new("RGB", (WIDTH, HEIGHT), BG)
     draw = ImageDraw.Draw(img)
@@ -389,11 +430,12 @@ def draw_step(step: Step, index: int, total: int, frame_path: Path) -> None:
     draw.rounded_rectangle(note_box, radius=18, fill=PANEL)
 
     draw.text((50, 132), "$ Demo Terminal", font=small_font, fill=ACCENT)
-    draw.text((1028, 132), "This is what is happening", font=small_font, fill=ACCENT)
+    draw.text((1028, 132), "Narration and callouts", font=small_font, fill=ACCENT)
 
     y = 168
     for command in step.commands:
-        y = render_text(draw, f"$ {command}", (50, y), mono_font, GREEN, term_box[2] - term_box[0] - 40)
+        prefix = "$ " if is_shell_command(command) else "• "
+        y = render_text(draw, f"{prefix}{command}", (50, y), mono_font, GREEN if prefix == "$ " else PINK, term_box[2] - term_box[0] - 40)
         y += 4
     y += 6
     render_text(draw, step.output, (50, y), mono_font, TEXT, term_box[2] - term_box[0] - 40)
@@ -408,22 +450,24 @@ def draw_step(step: Step, index: int, total: int, frame_path: Path) -> None:
 
 def encode_video(frames_dir: Path, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-framerate",
-        str(FPS),
-        "-start_number",
-        "1",
-        "-i",
-        str(frames_dir / "frame-%04d.png"),
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        str(output_path),
-    ]
-    subprocess.run(cmd, check=True)
+    with TemporaryDirectory(prefix="commitment-ledger-ffmpeg-", dir="/tmp") as runtime_dir:
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-framerate",
+            str(FPS),
+            "-start_number",
+            "1",
+            "-i",
+            str(frames_dir / "frame-%04d.png"),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            str(output_path),
+        ]
+        env = {**os.environ, "XDG_RUNTIME_DIR": runtime_dir}
+        subprocess.run(cmd, check=True, env=env)
 
 
 def main() -> int:
