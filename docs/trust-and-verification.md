@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This file explains what the local `verify` command proves today, and what it
+This file explains what the local `verify` flow proves today, and what it
 does not prove.
 
 For the machine-readable output contract of `verify --json`, use
@@ -16,7 +16,7 @@ When you run:
 go run ./cmd/commitment-ledger verify COMMITMENT-...
 ```
 
-the command resolves the referenced artifact and checks:
+the `verify` flow resolves the referenced artifact and checks:
 
 1. the raw artifact bytes exist in local CAS
 2. the grid envelope decodes successfully
@@ -38,7 +38,7 @@ the command resolves the referenced artifact and checks:
 `verify` does not prove:
 
 - that the signer was socially trustworthy
-- that the signer was authorized by some upstream PromiseGrid authority
+- that the signer was accepted by some upstream PromiseGrid trust source
 - that the payload claims were true in the real world
 - that another peer independently agrees with the assessment
 - that the local identity store itself was never tampered with

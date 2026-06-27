@@ -13,7 +13,7 @@ preserving later assessment as signed, CID-addressed protocol artifacts.
 3. Create commitments against discovered branch-qualified targets with
    `go run ./cmd/commitment-ledger commit ...`.
 4. Re-run `scan` to derive local evidence, then use `assess` to record the
-   final judgment.
+   final assessment.
 
 For day-to-day operation after that first pass, the usual operator loop is:
 
@@ -183,10 +183,10 @@ Observed work targets are always branch-qualified, for example
 - v0.1 observes local git clones only.
 - Source repositories are not edited by this tool.
 - Ledger records stay in this repository.
-- Manual evidence must stay within the referenced commitment's repo, branch, and promised target scope.
+- Manual evidence stays within the referenced commitment's repo, branch, and promised target scope.
 - Assessments may move commitments from `open` or `expired_unassessed` into a terminal outcome, but they do not overwrite already-finalized commitments.
 - `kept` is validated against the latest scanned work state; parent TODO promises require all discovered subtasks to be complete.
-- Assessment basis references must resolve to evidence artifacts for the same commitment.
+- Assessment basis references resolve to evidence artifacts for the same commitment.
 - Protocol docs under `docs/protocols/` define local pCIDs by exact document bytes.
 - Current emission stays on `commitment-promise-v1`, `implementation-conformance-v1`, `commitment-evidence-v2`, and `commitment-assessment-v2`; older frozen docs remain in-repo for historical pCID continuity.
 - `receive` also emits `exchange-receipt-v1` artifacts by default as local acknowledgements for imported bundle processing.
@@ -205,7 +205,7 @@ Observed work targets are always branch-qualified, for example
 - `provenance` browses `data/imports.jsonl` directly with filters for imported artifact CID, source path, signer, receipt signer, protocol pCID, and mode, and cross-links local receive receipts when present.
 - `reconcile` joins those raw provenance rows into an artifact-level or commitment-level exchange chain that shows repeated imports, source paths, receipt coverage, signer key state, and trust results together.
 - `import` rejects conflicting commitment, evidence, assessment, signer-support, and protocol-support state instead of silently diverging local history.
-- bundle files and `config/trust-policy.json` are parsed with strict schema checks; unknown fields and incomplete required sections now fail early.
+- bundle files and `config/trust-policy.json` are parsed with strict schema checks; unknown fields and incomplete spec-expected sections now fail early.
 - `send` and `receive` add a local filesystem inbox/outbox exchange path on top of the bundle format; they are still not network transport.
 - `status --exchange` and `report --imports` now surface repeated-import patterns, multi-source artifacts, multiple-receipt coverage, receipt signer patterns, and whether imported artifact signers resolve locally as active, archived, imported, or unknown.
 - `doctor` checks local artifact index entries against CAS bytes, validates imported support files, and flags identity-lineage problems such as missing archived signer keys or artifacts signed by unknown historical keys; `doctor --json` emits a stable machine-readable summary, including recommended `repair` flags when recovery is possible, `doctor --repairable` separates repairable findings from non-repairable ones, and `doctor --strict` treats warnings as failures for CI or audit use.

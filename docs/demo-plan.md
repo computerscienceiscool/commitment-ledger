@@ -22,7 +22,7 @@ Use these names consistently in the demo:
 - `Alice`: primary actor and good-faith promiser/promisee
 - `Bob`: means well, often lets people down, and is useful for partial or late fulfillment cases
 - `Dave`: reliable fallback or repair helper
-- `Mallory`: adversarial or misleading actor used for malformed, confusing, or hostile cases
+- `Mallory`: adversarial or misleading actor used for malformed, confusing, or untrusted cases
 
 This matches the guide well enough to stay familiar:
 
@@ -132,7 +132,7 @@ Use it to show:
 - malformed TODO structures
 - branch divergence intended to confuse observers
 - misleading checked-state changes
-- evidence that should be recorded but not trusted as a global verdict
+- evidence that should be recorded but not trusted as a shared final assessment
 
 Do not use Mallory as the only negative case. Bob and Mallory are different:
 
@@ -280,8 +280,8 @@ go run ./cmd/commitment-ledger expire
 
 Expected result:
 
-- the demo shows the difference between expiration and later judgment
-- Bob is not treated as hostile, only unreliable
+- the demo shows the difference between expiration and later assessment
+- Bob is not treated as adversarial, only unreliable
 
 ## Scenario 3: Dave Repairs or Reviews Successfully
 
@@ -307,7 +307,7 @@ Use `mallory-demo` for negative cases:
 Expected result:
 
 - malformed or ambiguous input is surfaced or quarantined locally
-- no global truth is inferred just because Mallory emitted something
+- no shared truth is inferred just because Mallory emitted something
 - local assessment remains explicit
 
 ## What To Inspect

@@ -43,7 +43,7 @@ The main app repo is:
 /home/jj/lab/commitment-ledger
 ```
 
-If you want repo-native helpers instead of typing every `go run` command, start
+If you want repo-native helpers instead of typing every `go run` invocation, start
 from the app repo and use:
 
 ```bash
@@ -63,7 +63,7 @@ What to say:
 
 > The important shift is that we are not treating a task board as the whole
 > truth. We are tracking work, promises about that work, evidence, and later
-> judgment.
+> assessment.
 
 ## Step 1: Show The Source Work
 
@@ -169,7 +169,7 @@ What to say:
 
 > This is the first actual promise. Before this point, there was only work.
 
-> The command returns two identifiers: a local commitment ID for operators and a
+> The CLI call returns two identifiers: a local commitment ID for operators and a
 > CID for the emitted artifact bytes.
 
 > That means we have both a human-facing handle and a content-addressed message
@@ -290,8 +290,8 @@ What to say:
 
 > The second scan sees that Alice’s promised subtask is now checked.
 
-> That creates evidence. Evidence is not yet the final judgment, but it is the
-> observable basis for judgment.
+> That creates evidence. Evidence is not yet the final assessment, but it is the
+> observable basis for later assessment.
 
 What to point at:
 
@@ -318,11 +318,11 @@ What to say:
 
 > Now we move from evidence to explicit assessment.
 
-> The key design point is that checked work is evidence, but the final judgment
+> The key design point is that checked work is evidence, but the final assessment
 > is still a separate local act.
 
 > This keeps the system from pretending that every observable state change is
-> already a universal verdict.
+> already a shared final assessment.
 
 ## Step 11: Verify The Assessment Artifact
 
@@ -411,7 +411,7 @@ What to say:
 > Mallory is not just unreliable. Mallory tries to confuse the system.
 
 > This repo contains intentionally malformed or awkward detail structure so we
-> can demonstrate that the tool should observe conservatively and keep judgment
+> can demonstrate that the tool should observe conservatively and keep assessment
 > local.
 
 ## Closing Summary

@@ -101,7 +101,7 @@ go run ./cmd/commitment-ledger evidence \
   --notes "Observed blocker"
 ```
 
-Manual evidence must stay within the commitment's repo, branch, and promised
+Manual evidence stays within the commitment's repo, branch, and promised
 target scope.
 
 ### `assess`
@@ -118,9 +118,9 @@ go run ./cmd/commitment-ledger assess \
 Important current rules:
 
 - already-finalized commitments cannot be silently reassessed
-- basis references must resolve to evidence for the same commitment
+- basis references resolve to evidence for the same commitment
 - `kept` is checked against the latest scanned work state
-- for parent TODO targets, all discovered subtasks must be complete
+- for parent TODO targets, all discovered subtasks need to be complete
 
 ### `status`
 
@@ -235,7 +235,7 @@ go run ./cmd/commitment-ledger verify --json COMMITMENT-...
 It also tells you whether the artifact's `protocol_pcid` matches a local frozen
 protocol doc, whether the identity/protocol support came from built-in or
 imported state, the latest recorded import provenance when applicable, and the
-current local trust-policy judgment for signer, protocol, and import source. If
+current local trust-policy assessment for signer, protocol, and import source. If
 the artifact was signed before a local key rotation, `verify` will report the
 archived signer key state instead of failing only because the active key has
 changed.
@@ -403,7 +403,7 @@ choose a different local receipt signer.
 Bundle files are also parsed strictly:
 
 - unknown JSON fields are rejected
-- missing required artifact fields are rejected before any local state changes
+- artifact fields expected by the protocol are rejected before any local state changes
 
 ### `doctor`
 
@@ -427,7 +427,7 @@ understand it.
 
 Use `--repairable` when you want the current findings split into:
 
-- issues the existing `repair` command may be able to address
+- issues the existing `repair` workflow may be able to address
 - issues that still need operator investigation or manual recovery
 
 Use `--strict` when warnings such as missing human-facing conformance files
@@ -583,7 +583,7 @@ Recommended recovery flow:
 4. Run `make status` and `make status STATUS_ARGS='--exchange'`.
 5. Use `inspect` or `verify` on a few representative artifacts before resuming normal operation.
 
-For a shorter command-oriented matrix, see `docs/recovery-checklist.md`.
+For a shorter CLI-oriented matrix, see `docs/recovery-checklist.md`.
 
 ## Troubleshooting
 
