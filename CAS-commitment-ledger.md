@@ -6,6 +6,17 @@ This note sketches how Commitment Ledger would look if it moved from
 file-authoritative local storage to a CAS-first model more aligned with current
 PromiseGrid guidance.
 
+As of the June 29, 2026 PromiseGrid dev-guide refresh, that guidance now leans
+more clearly toward:
+
+- PromiseGrid-native reference sets as durable canonical state
+- sparse CAS as the primary content store behind those reference sets
+- Git import/export/push/pull as bridge adapters rather than source of truth
+- chunk-manifest pressure for large-file or directory-like state
+
+This note therefore treats refs and indexes not only as implementation
+conveniences, but as the beginning of a more native reference-set model.
+
 The current repo already keeps signed artifact envelopes in local CAS, but the
 primary operational state still lives in JSONL files and Markdown records under
 `data/` and `records/`. In a CAS-first design, immutable artifacts become the
@@ -32,7 +43,8 @@ The intended direction is:
 
 - protocol artifacts are primary
 - exact bytes are retained by content address
-- local state is reconstructed from artifacts plus explicit local refs
+- local state is reconstructed from artifacts plus explicit local refs or
+  reference sets
 - printable or operator-facing files are projections rather than source of truth
 
 That is a better fit for:
@@ -42,6 +54,9 @@ That is a better fit for:
 - exchange of exact bytes between peers
 - later reassessment from preserved artifacts
 - cleaner portability across runtimes or storage backends
+- the newer PromiseGrid direction that durable collaboration state may have its
+  own PromiseGrid-native reference-set story instead of collapsing into live
+  sync or Git history
 
 ## Shared Baseline
 
@@ -76,7 +91,7 @@ otherwise:
 CAS-first does not mean no files on disk. It still needs:
 
 - a local CAS object store
-- local refs or heads
+- local refs, heads, or reference-set views
 - index files or index chunks
 - trust and identity configuration
 - optional projection caches
@@ -150,6 +165,14 @@ small local structures such as:
 
 Those indexes are explicitly rebuildable from CAS plus local refs.
 
+Under the newest dev-guide pressure, this option should be read as a stepping
+stone toward a more native reference-set model:
+
+- refs are not just mutable convenience pointers
+- they are candidates for durable PromiseGrid-facing reference-set semantics
+- Git-like branch or tag behavior, if ever needed, should be treated as a
+  bridge adapter over native state rather than the canonical source
+
 ### Local state access
 
 The runtime usually answers operator commands from indexes first:
@@ -190,6 +213,8 @@ Reason:
 - the current JSONL and Markdown model can be migrated into rebuildable refs
   and indexes without losing usability
 - it preserves the PromiseGrid direction that exact artifacts are primary
+- it leaves room for the newer PromiseGrid-native reference-set direction
+  without forcing Commitment Ledger to pretend Git history is canonical state
 
 In other words:
 
@@ -203,13 +228,17 @@ If Commitment Ledger adopts Option B, the storage contract would become:
 ### Primary
 
 - CAS objects containing exact protocol artifacts
-- optional chunk-level CAS objects if larger artifact payloads need a named CAS
-  profile later
+- optional chunk-level CAS objects when larger artifact payloads or
+  directory-like state need a named CAS profile
+- optional chunk manifests when one artifact needs to name a structured set of
+  smaller CAS objects
 
 ### Secondary but durable
 
-- local refs naming important heads
+- local refs or reference-set views naming important heads
 - local indexes that can be rebuilt from CAS and refs
+- bridge metadata when Git import/export/push/pull is used as an adapter rather
+  than a source of truth
 
 ### Disposable projections
 
@@ -234,6 +263,9 @@ Likely new app-level families:
 - import provenance artifact
 - index checkpoint artifact, if the app ever wants signed or exchangeable
   summaries rather than purely local indexes
+- reference-set artifact, if local refs need a portable artifact form later
+- chunk-manifest artifact, if one logical Commitment Ledger object grows beyond
+  one convenient CAS object
 
 ## Example Storage Layout
 
@@ -249,10 +281,13 @@ data/
     work/<repo>/<branch>/<work-id>
     commitments/<commitment-id>
     artifacts/<artifact-cid>
+    reference-sets/<set-name>
   indexes/
     by-commitment/<commitment-id>.json
     by-artifact/<artifact-cid>.json
     by-repo/<repo>/<branch>.json
+  bridges/
+    git/<bridge-name>.json
 records/
   commitments/<commitment-id>.md
   assessments/<assessment-id>.md
@@ -263,6 +298,8 @@ Important discipline:
 - `data/cas/` is primary durable content
 - `data/refs/` names current local heads
 - `data/indexes/` is rebuildable local acceleration
+- `data/bridges/` records adapter-specific state and should not quietly become
+  canonical PromiseGrid state
 - `records/` is human-facing projection only
 
 ## Migration Path
@@ -275,6 +312,13 @@ The safest migration would be incremental.
 4. Add rebuild logic that regenerates indexes from CAS plus refs.
 5. Reclassify JSONL files as compatibility projections or remove them once the
    index layer is stable.
+
+If later PromiseGrid work hardens around native reference sets plus Git bridge
+adapters, an additional follow-on step would be:
+
+6. Promote selected local refs into explicit reference-set artifacts and treat
+   any Git sync as import/export over those native sets rather than as the
+   canonical state model.
 
 That lets the app move toward CAS-first storage without freezing feature work
 for a full rewrite.
@@ -292,6 +336,12 @@ Before implementing, the repo needs explicit answers for:
   state?
 - When unknown-`pCID` artifacts arrive, what minimum local indexing promise
   should still be kept?
+- Which local refs are merely app-local working memory, and which should become
+  portable reference-set artifacts if the app later needs cross-peer durable
+  collaboration state?
+- If bridge adapters are used, what loss, refusal, or downgrade semantics apply
+  when Git cannot faithfully carry a native Commitment Ledger reference-set or
+  chunk-manifest structure?
 
 ## Practical Summary
 
@@ -300,7 +350,7 @@ If Commitment Ledger moves toward CAS-first storage, it should not replace
 architectural change:
 
 - exact CAS artifacts become the source of truth
-- local refs and indexes become the operator layer
+- local refs, reference sets, and indexes become the operator layer
 - Markdown and similar files become projections
 
 That is the clearest path to a more PromiseGrid-aligned Commitment Ledger.

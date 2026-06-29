@@ -20,6 +20,11 @@ That means two different kinds of incompleteness need to stay separate:
 - Shared peer exchange, trust-accounting, CAS replication, and related app
   patterns are still being explored upstream rather than frozen as one final
   contract.
+- The newer upstream storage/session/message pressure now points more clearly
+  toward PromiseGrid-native reference sets plus sparse CAS as durable canonical
+  state, with Git-style workflows treated as bridge adapters rather than source
+  of truth, but that direction is still evidence rather than a frozen
+  Commitment Ledger app contract.
 
 ### Local-missing
 
@@ -28,11 +33,20 @@ That means two different kinds of incompleteness need to stay separate:
 - No richer shared trust-accounting view yet beyond local policy checks.
 - No explicit migration story from these local protocol docs to any future
   upstream frozen specs yet.
+- No native reference-set artifact layer yet beyond local refs and indexes.
+- No explicit Git-bridge mapping, loss, or refusal semantics yet for native
+  CAS-first state.
+- No chunk-manifest story yet for larger or directory-like logical objects.
 
 Current local exchange support is bundle-based plus filesystem inbox/outbox
 helpers: operators can `export`, `import`, `send`, and `receive` artifacts plus
 support material, but there is still no shared network transport or peer
 protocol layered over that.
+
+Current local storage is now moving in a more CAS-first direction on the
+`cas-commitment-ledger` branch, but it is still an app-local implementation
+step rather than a claim that PromiseGrid has already frozen one shared
+reference-set, sparse-CAS, or bridge-adapter contract for this app family.
 
 Current local trust support is policy-based only: `verify`, `status --exchange`,
 and `report --imports` can apply a local `config/trust-policy.json`, but that is
@@ -64,6 +78,12 @@ This repo now publishes conformance in two aligned ways:
 Both are explicit local statements of contract support, not a claim that
 upstream PromiseGrid has frozen those exact docs for everyone else.
 
+Read those statements as this implementation's current app-side promise claims
+about the protocol documents it can interpret and emit. They are not yet a
+kernel-style minimum-port promise record, and they are not evidence that the
+upstream guide has frozen the first required storage/session/message spec set
+for this app family.
+
 The current local conformance payload distinguishes between:
 
 - frozen protocol docs the implementation can interpret locally
@@ -77,12 +97,21 @@ Until upstream PromiseGrid freezes one shared Commitment Ledger app contract,
 the repo-level `CHANGELOG.md` entries should be read as claims about these
 local frozen docs, not as claims of universal upstream app-spec adoption.
 
+The same caution now applies to CAS-first storage plans: local refs, indexes,
+and future reference-set artifacts may become a good implementation direction,
+but they should not be presented as if the upstream guide has already frozen
+one mandatory reference-set or Git-bridge shape for all PromiseGrid apps.
+
 ## Current Operator Reminder
 
 When inspecting `data/artifacts.jsonl`, remember that rows there are local
 index entries over raw CAS objects. They are documented field-by-field in
 `docs/promisegrid-app-design.md` and should not be mistaken for the protocol
 artifact bytes themselves.
+
+The same distinction applies to any CAS-first local refs or indexes: they are
+operator-side working state and rebuildable local acceleration unless and until
+the app explicitly promotes part of that state into named portable artifacts.
 
 For day-to-day use, prefer the repo's operator-facing commands and guide
 instead of reading projection files directly first:
