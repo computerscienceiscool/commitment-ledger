@@ -861,6 +861,7 @@ func TestRunRepairRebuildsRecordsAndProtocolCAS(t *testing.T) {
 		return runRepair(root, store, registry, nil)
 	})
 	if !strings.Contains(out, "Rewrote commitment records: 1") ||
+		!strings.Contains(out, "Rebuilt local state indexes: 6") ||
 		!strings.Contains(out, "Restored built-in protocol docs to CAS: 7") ||
 		!strings.Contains(out, "Restored imported artifact envelopes: 0") {
 		t.Fatalf("unexpected repair output:\n%s", out)
@@ -870,6 +871,82 @@ func TestRunRepairRebuildsRecordsAndProtocolCAS(t *testing.T) {
 	}
 	if _, err := os.Stat(store.CAS.Path(pcid)); err != nil {
 		t.Fatalf("expected repaired protocol CAS file: %v", err)
+	}
+}
+
+func TestRunDoctorAndRepairLocalState(t *testing.T) {
+	root := t.TempDir()
+	copyProtocolDocs(t, root)
+	store := ledger.NewStore(root)
+	registry, err := protocol.Load(root)
+	if err != nil {
+		t.Fatalf("protocol.Load: %v", err)
+	}
+
+	repoPath := filepath.Join(root, "fixture-repo")
+	writeFixtureRepo(t, repoPath, false)
+	gitCommitAll(t, repoPath, "Initial TODO state")
+	cfg := config.ReposConfig{
+		Repos: []config.RepoSource{{
+			Name:      "fixture",
+			LocalPath: repoPath,
+			Branch:    "main",
+			TodoFile:  "TODO/TODO.md",
+			Enabled:   true,
+		}},
+	}
+	configPath := filepath.Join(root, "config", "repos.json")
+	writeConfig(t, configPath, cfg)
+
+	now := time.Date(2026, 6, 24, 22, 30, 0, 0, time.FixedZone("PDT", -7*3600))
+	if err := runScan(root, store, registry, now, []string{"--config", configPath}); err != nil {
+		t.Fatalf("runScan: %v", err)
+	}
+	if err := runCommit(root, store, registry, now.Add(time.Minute), []string{
+		"--promiser", "Alice",
+		"--repo", "fixture",
+		"--branch", "main",
+		"--target", "fixture/main/TODO-ravud/1",
+		"--due", "2026-07-01",
+		"--promise", "I promise to complete subtask 1.",
+	}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+
+	paths := []string{
+		filepath.Join(root, "data", "refs", "reference-sets", "commitment-state-heads.ref"),
+		filepath.Join(root, "data", "refs", "reference-sets", "commitment-state-heads.json"),
+		filepath.Join(root, "data", "refs", "commitments-latest.ref"),
+		filepath.Join(root, "data", "indexes", "commitment-state", "commitments-latest.json"),
+		filepath.Join(root, "data", "indexes", "commitments-latest.json"),
+	}
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("remove local state path %s: %v", path, err)
+		}
+	}
+
+	doctorOut, doctorErr := captureStdoutWithError(t, func() error {
+		return runDoctor(root, store, registry, []string{"--repairable"})
+	})
+	if doctorErr == nil || !strings.Contains(doctorErr.Error(), "doctor found") {
+		t.Fatalf("runDoctor --repairable error = %v, want doctor failure", doctorErr)
+	}
+	if !strings.Contains(doctorOut, "run repair --local-state") ||
+		!strings.Contains(doctorOut, "Repair Action: repair --local-state") {
+		t.Fatalf("doctor output missing local-state guidance:\n%s", doctorOut)
+	}
+
+	out := captureStdout(t, func() error {
+		return runRepair(root, store, registry, []string{"--local-state"})
+	})
+	if !strings.Contains(out, "Rebuilt local state indexes: 6") {
+		t.Fatalf("unexpected repair output:\n%s", out)
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected restored local state path %s: %v", path, err)
+		}
 	}
 }
 

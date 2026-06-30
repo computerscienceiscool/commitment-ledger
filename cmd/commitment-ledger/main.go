@@ -1127,6 +1127,7 @@ func runDoctor(root string, store *ledger.Store, registry protocol.Registry, arg
 func runRepair(root string, store *ledger.Store, registry protocol.Registry, args []string) error {
 	fs := flag.NewFlagSet("repair", flag.ContinueOnError)
 	records := fs.Bool("records", false, "rewrite Markdown projection records from JSONL state")
+	localState := fs.Bool("local-state", false, "rebuild local refs, reference sets, and index caches from recoverable state")
 	protocolCAS := fs.Bool("protocol-cas", false, "restore built-in frozen protocol docs into local CAS")
 	importArtifacts := fs.Bool("import-artifacts", false, "restore imported artifact envelopes from bundle source paths when possible")
 	importSupport := fs.Bool("import-support", false, "restore imported signer and protocol support from bundle source paths when possible")
@@ -1138,8 +1139,9 @@ func runRepair(root string, store *ledger.Store, registry protocol.Registry, arg
 	if fs.NArg() != 0 {
 		return fmt.Errorf("repair does not accept positional references")
 	}
-	if !*records && !*protocolCAS && !*importArtifacts && !*importSupport && !*identityLineage {
+	if !*records && !*localState && !*protocolCAS && !*importArtifacts && !*importSupport && !*identityLineage {
 		*records = true
+		*localState = true
 		*protocolCAS = true
 		*importArtifacts = true
 		*importSupport = true
@@ -1173,6 +1175,14 @@ func runRepair(root string, store *ledger.Store, registry protocol.Registry, arg
 			}
 			rewrittenAssessments++
 		}
+	}
+	rebuiltLocalState := 0
+	if *localState {
+		count, err := store.RebuildLocalState()
+		if err != nil {
+			return err
+		}
+		rebuiltLocalState = count
 	}
 	restoredProtocols := 0
 	if *protocolCAS {
@@ -1213,6 +1223,7 @@ func runRepair(root string, store *ledger.Store, registry protocol.Registry, arg
 	result := repairResult{
 		Applied: repairApplied{
 			Records:         *records,
+			LocalState:      *localState,
 			ProtocolCAS:     *protocolCAS,
 			ImportArtifacts: *importArtifacts,
 			ImportSupport:   *importSupport,
@@ -1220,6 +1231,7 @@ func runRepair(root string, store *ledger.Store, registry protocol.Registry, arg
 		},
 		RewroteCommitmentRecords:          rewrittenCommitments,
 		RewroteAssessmentRecords:          rewrittenAssessments,
+		RebuiltLocalStateIndexes:          rebuiltLocalState,
 		RestoredBuiltInProtocolDocsToCAS:  restoredProtocols,
 		RestoredImportedArtifactEnvelopes: restoredImportedArtifacts,
 		RestoredImportedProtocolSupport:   restoredImportedProtocols,
@@ -1232,6 +1244,7 @@ func runRepair(root string, store *ledger.Store, registry protocol.Registry, arg
 
 	fmt.Printf("Rewrote commitment records: %d\n", rewrittenCommitments)
 	fmt.Printf("Rewrote assessment records: %d\n", rewrittenAssessments)
+	fmt.Printf("Rebuilt local state indexes: %d\n", rebuiltLocalState)
 	fmt.Printf("Restored built-in protocol docs to CAS: %d\n", restoredProtocols)
 	fmt.Printf("Restored imported artifact envelopes: %d\n", restoredImportedArtifacts)
 	fmt.Printf("Restored imported protocol support files: %d\n", restoredImportedProtocols)
@@ -1286,6 +1299,7 @@ type identityRestoreResult struct {
 
 type repairApplied struct {
 	Records         bool `json:"records"`
+	LocalState      bool `json:"local_state"`
 	ProtocolCAS     bool `json:"protocol_cas"`
 	ImportArtifacts bool `json:"import_artifacts"`
 	ImportSupport   bool `json:"import_support"`
@@ -1296,6 +1310,7 @@ type repairResult struct {
 	Applied                           repairApplied `json:"applied"`
 	RewroteCommitmentRecords          int           `json:"rewrote_commitment_records"`
 	RewroteAssessmentRecords          int           `json:"rewrote_assessment_records"`
+	RebuiltLocalStateIndexes          int           `json:"rebuilt_local_state_indexes"`
 	RestoredBuiltInProtocolDocsToCAS  int           `json:"restored_built_in_protocol_docs_to_cas"`
 	RestoredImportedArtifactEnvelopes int           `json:"restored_imported_artifact_envelopes"`
 	RestoredImportedProtocolSupport   int           `json:"restored_imported_protocol_support"`
@@ -4054,6 +4069,13 @@ func doctorReport(root string, store *ledger.Store, registry protocol.Registry) 
 		return summary, err
 	}
 	checkExpectedImportedSupport(root, &summary, importedProtocols, importedSigners, imports, bundlePathAvailable)
+	localStateIssues, err := store.MissingLocalStateIssues()
+	if err != nil {
+		return summary, err
+	}
+	for _, issue := range localStateIssues {
+		addDoctorError(&summary, issue, true, "run repair --local-state to rebuild local refs, reference sets, and index caches from recoverable state")
+	}
 	if _, err := os.Stat(changelog.Path(root)); err != nil {
 		if os.IsNotExist(err) {
 			summary.Warnings = append(summary.Warnings, "CHANGELOG.md not found")
@@ -4084,6 +4106,8 @@ func recommendedRepairActions(summary doctorSummary) []string {
 		switch {
 		case strings.Contains(hint, "repair --import-artifacts"):
 			actions = appendRepairAction(actions, "--import-artifacts")
+		case strings.Contains(hint, "repair --local-state"):
+			actions = appendRepairAction(actions, "--local-state")
 		case strings.Contains(hint, "repair --import-support"):
 			actions = appendRepairAction(actions, "--import-support")
 		case strings.Contains(hint, "repair --identity-lineage"):
