@@ -25,6 +25,7 @@ var localStateDescriptors = []localStateDescriptor{
 func (s *Store) MissingLocalStateIssues() ([]string, error) {
 	var issues []string
 	trackedFamilies := map[string]bool{}
+	familyMissingPaths := map[string]bool{}
 	for _, descriptor := range localStateDescriptors {
 		shouldTrack, err := s.shouldTrackLocalState(descriptor)
 		if err != nil {
@@ -52,7 +53,28 @@ func (s *Store) MissingLocalStateIssues() ([]string, error) {
 			}
 		}
 		if len(missing) > 0 {
+			familyMissingPaths[familySet] = true
 			issues = append(issues, fmt.Sprintf("reference set %s missing local state files: %s", familySet, strings.Join(missing, ", ")))
+		}
+	}
+	for _, descriptor := range localStateDescriptors {
+		shouldTrack, err := s.shouldTrackLocalState(descriptor)
+		if err != nil {
+			return nil, err
+		}
+		if !shouldTrack || familyMissingPaths[descriptor.FamilySet] {
+			continue
+		}
+		set, ok, err := s.loadReferenceSet(descriptor.FamilySet)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		entry, ok := set.Entries[descriptor.IndexName]
+		if !ok || entry.CID == "" {
+			issues = append(issues, fmt.Sprintf("reference set %s missing entry for %s", descriptor.FamilySet, descriptor.IndexName))
 		}
 	}
 	return issues, nil

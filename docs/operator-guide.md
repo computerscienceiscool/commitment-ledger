@@ -38,7 +38,7 @@ make reconcile RECONCILE_ARGS='--commitment COMMITMENT-... --json'
 make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'
 make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'
 make doctor DOCTOR_ARGS='--repairable'
-make repair REPAIR_ARGS='--records --protocol-cas --import-artifacts --import-support'
+make repair REPAIR_ARGS='--records --local-state --protocol-cas --import-artifacts --import-support'
 make identity IDENTITY_ARGS='list --json'
 ```
 
@@ -418,6 +418,7 @@ go run ./cmd/commitment-ledger doctor --strict
 
 - artifact index rows versus CAS presence and decodability
 - indexed protocol, payload, and proof CIDs versus decoded envelope bytes
+- local refs, reference-set files, and grouped index caches needed for current CAS-first working state
 - primary, archived, and imported identity files can be parsed
 - artifact signer/key pairs still resolve against current, archived, or imported identity material
 - imported protocol metadata matches imported protocol document bytes
@@ -441,6 +442,7 @@ Use `--json` when you need the machine-readable health summary defined by
 ```bash
 go run ./cmd/commitment-ledger repair
 go run ./cmd/commitment-ledger repair --records
+go run ./cmd/commitment-ledger repair --local-state
 go run ./cmd/commitment-ledger repair --protocol-cas
 go run ./cmd/commitment-ledger repair --import-artifacts
 go run ./cmd/commitment-ledger repair --import-support
@@ -451,6 +453,7 @@ go run ./cmd/commitment-ledger repair --json --identity-lineage
 `repair` is intentionally conservative. Today it can:
 
 - rebuild commitment and assessment Markdown projection files from JSONL state
+- rebuild local refs, reference-set files, and grouped index caches from recoverable JSONL/CAS-backed app state
 - restore built-in frozen protocol docs into local CAS
 - restore missing imported artifact envelopes from previously recorded bundle source paths
 - restore missing imported signer and protocol support files from previously recorded bundle source paths
@@ -579,7 +582,7 @@ Recommended recovery flow:
 
 1. Restore those paths together into a fresh checkout.
 2. Run `make doctor`.
-3. Run `make repair` if records, built-in protocol CAS objects, or imported artifact envelopes are missing.
+3. Run `make repair` if records, local refs/reference sets/index caches, built-in protocol CAS objects, or imported artifact envelopes are missing.
 4. Run `make status` and `make status STATUS_ARGS='--exchange'`.
 5. Use `inspect` or `verify` on a few representative artifacts before resuming normal operation.
 

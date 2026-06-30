@@ -229,3 +229,42 @@ func TestLoadLatestCommitmentsFallsBackToLegacyReferenceSet(t *testing.T) {
 		t.Fatalf("legacy reference-set fallback failed, got=%+v", items)
 	}
 }
+
+func TestMissingLocalStateIssuesFlagsMissingReferenceSetEntry(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+
+	items := []model.WorkItem{
+		{Repo: "repo", Branch: "main", WorkID: "TODO-ravud", Status: "open"},
+	}
+	if err := store.AppendWorkItems(items); err != nil {
+		t.Fatalf("append work items: %v", err)
+	}
+
+	set, ok, err := store.loadReferenceSet(workObservationReferenceSet)
+	if err != nil {
+		t.Fatalf("load reference set: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected work observation reference set to exist")
+	}
+	delete(set.Entries, "work-items-latest")
+	if err := store.persistReferenceSet(workObservationReferenceSet, set); err != nil {
+		t.Fatalf("persist reference set: %v", err)
+	}
+
+	issues, err := store.MissingLocalStateIssues()
+	if err != nil {
+		t.Fatalf("MissingLocalStateIssues: %v", err)
+	}
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue, "reference set work-observation-heads missing entry for work-items-latest") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected missing reference-set entry issue, got=%v", issues)
+	}
+}

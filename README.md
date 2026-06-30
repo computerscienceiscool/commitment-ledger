@@ -78,7 +78,7 @@ or substitute `go run ./cmd/commitment-ledger ...` if you do not want to build f
 ./bin/commitment-ledger doctor --json
 ./bin/commitment-ledger doctor --repairable
 ./bin/commitment-ledger doctor --strict
-./bin/commitment-ledger repair --json --import-artifacts --import-support --identity-lineage
+./bin/commitment-ledger repair --json --local-state --import-artifacts --import-support --identity-lineage
 ./bin/commitment-ledger identity list --json
 ./bin/commitment-ledger identity history Alice --json
 ./bin/commitment-ledger identity backup --include-imported-support --out /tmp/alice-identities.json Alice
@@ -112,7 +112,7 @@ Common targets:
 - `make send SEND_ARGS='--outbox /tmp/peer-outbox COMMITMENT-...'`: write a bundle into a peer-facing outbox directory
 - `make receive RECEIVE_ARGS='--inbox /tmp/peer-inbox --archive /tmp/peer-archive'`: import all bundle files from a peer inbox directory and emit local signed receive receipts by default
 - `make doctor DOCTOR_ARGS='--repairable --strict'`: verify local artifact, CAS, and imported support integrity with repairability hints, optional strict warning failures, or JSON output
-- `make repair REPAIR_ARGS='--records --protocol-cas --import-artifacts --import-support --identity-lineage'`: rebuild Markdown projections, restore built-in protocol docs into local CAS, restore imported artifact envelopes plus imported support files from saved bundle paths, and normalize archived identity filenames when the old key material is still present
+- `make repair REPAIR_ARGS='--records --local-state --protocol-cas --import-artifacts --import-support --identity-lineage'`: rebuild Markdown projections, rebuild local refs/reference sets/index caches, restore built-in protocol docs into local CAS, restore imported artifact envelopes plus imported support files from saved bundle paths, and normalize archived identity filenames when the old key material is still present
 - `make identity IDENTITY_ARGS='restore --in /tmp/identities.json Alice'`: restore exported current and archived signer identity material
 - `make conformance VERSION=v0.1.0 SIGNER=commitment-ledger`: emit a local conformance claim
 - `make conformance-update VERSION=v0.1.0 SIGNER=commitment-ledger`: emit a conformance artifact and refresh the managed `CHANGELOG.md` entries
@@ -208,11 +208,12 @@ Observed work targets are always branch-qualified, for example
 - bundle files and `config/trust-policy.json` are parsed with strict schema checks; unknown fields and incomplete spec-expected sections now fail early.
 - `send` and `receive` add a local filesystem inbox/outbox exchange path on top of the bundle format; they are still not network transport.
 - `status --exchange` and `report --imports` now surface repeated-import patterns, multi-source artifacts, multiple-receipt coverage, receipt signer patterns, and whether imported artifact signers resolve locally as active, archived, imported, or unknown.
-- `doctor` checks local artifact index entries against CAS bytes, validates imported support files, and flags identity-lineage problems such as missing archived signer keys or artifacts signed by unknown historical keys; `doctor --json` emits a stable machine-readable summary, including recommended `repair` flags when recovery is possible, `doctor --repairable` separates repairable findings from non-repairable ones, and `doctor --strict` treats warnings as failures for CI or audit use.
+- `doctor` checks local artifact index entries against CAS bytes, validates imported support files, flags missing rebuildable local refs/reference sets/index caches, and flags identity-lineage problems such as missing archived signer keys or artifacts signed by unknown historical keys; `doctor --json` emits a stable machine-readable summary, including recommended `repair` flags when recovery is possible, `doctor --repairable` separates repairable findings from non-repairable ones, and `doctor --strict` treats warnings as failures for CI or audit use.
 - `repair --identity-lineage` repairs the recoverable subset of lineage issues by normalizing archived identity filenames when the archived key bytes still exist locally under the wrong name.
+- `repair --local-state` rebuilds local refs, reference-set files, and grouped index caches from recoverable JSONL/CAS-backed app state.
 - `repair --json` emits machine-readable counts for each applied recovery step.
 - `repair --import-support` restores imported signer and protocol support files from recorded bundle source paths when those support files have gone missing.
-- `repair` rebuilds Markdown records from JSONL state, restores built-in frozen protocol docs into local CAS, and can restore missing imported artifact envelopes from recorded bundle source paths.
+- `repair` rebuilds Markdown records from JSONL state, rebuilds local CAS-first working state, restores built-in frozen protocol docs into local CAS, and can restore missing imported artifact envelopes from recorded bundle source paths.
 - if those recorded bundle source paths are gone, `doctor` now classifies the issue as non-repairable by automation and points you at recovering the original bundle or re-importing/exporting it from another repo
 - `identity list`, `identity show`, `identity history`, `identity backup`, `identity restore`, and `identity rotate` provide a basic local signer lifecycle workflow with archive copies of rotated keys; `identity backup --include-imported-support` can also preserve imported signer/protocol support, and `identity restore` reports partial success, skipped identical files, and explicit conflicts when local material differs from the backup.
 

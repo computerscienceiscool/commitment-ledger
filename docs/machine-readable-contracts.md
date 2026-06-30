@@ -72,6 +72,8 @@ These commands currently emit JSON to stdout:
   - local integrity summary object
 - `repair --json`
   - local repair result object
+  - includes whether `local_state` repair was applied and how many local state
+    index surfaces were rebuilt
 - `identity list --json`
   - identity summary array
 - `identity show --json`
