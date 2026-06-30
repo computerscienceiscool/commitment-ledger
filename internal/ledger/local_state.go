@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"commitment-ledger/internal/cid"
 )
 
 type localStateDescriptor struct {
@@ -75,6 +77,40 @@ func (s *Store) MissingLocalStateIssues() ([]string, error) {
 		entry, ok := set.Entries[descriptor.IndexName]
 		if !ok || entry.CID == "" {
 			issues = append(issues, fmt.Sprintf("reference set %s missing entry for %s", descriptor.FamilySet, descriptor.IndexName))
+			continue
+		}
+		coherenceIssues, err := s.localStateCoherenceIssues(descriptor, entry.CID)
+		if err != nil {
+			return nil, err
+		}
+		issues = append(issues, coherenceIssues...)
+	}
+	return issues, nil
+}
+
+func (s *Store) localStateCoherenceIssues(descriptor localStateDescriptor, expectedCID string) ([]string, error) {
+	var issues []string
+	refBody, err := os.ReadFile(s.refPath(descriptor.IndexName + ".ref"))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read %s ref: %w", descriptor.IndexName, err)
+	}
+	if err == nil {
+		got := string(trimTrailingWhitespace(refBody))
+		if got != "" && got != expectedCID {
+			issues = append(issues, fmt.Sprintf("index %s loose ref CID %s does not match reference set CID %s", descriptor.IndexName, got, expectedCID))
+		}
+	}
+	for _, cachePath := range []string{s.structuredIndexPath(descriptor.IndexName), s.legacyIndexPath(descriptor.IndexName)} {
+		cacheBody, err := os.ReadFile(cachePath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, fmt.Errorf("read %s cache %s: %w", descriptor.IndexName, cachePath, err)
+		}
+		got := cid.Sum(cacheBody)
+		if got != expectedCID {
+			issues = append(issues, fmt.Sprintf("index %s cache %s CID %s does not match reference set CID %s", descriptor.IndexName, cachePath, got, expectedCID))
 		}
 	}
 	return issues, nil

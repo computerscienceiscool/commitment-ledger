@@ -268,3 +268,67 @@ func TestMissingLocalStateIssuesFlagsMissingReferenceSetEntry(t *testing.T) {
 		t.Fatalf("expected missing reference-set entry issue, got=%v", issues)
 	}
 }
+
+func TestMissingLocalStateIssuesFlagsMismatchedLooseRefCID(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+
+	items := []model.WorkItem{
+		{Repo: "repo", Branch: "main", WorkID: "TODO-ravud", Status: "open"},
+	}
+	if err := store.AppendWorkItems(items); err != nil {
+		t.Fatalf("append work items: %v", err)
+	}
+
+	if err := writeBytesFile(store.refPath("work-items-latest.ref"), []byte("bafkfakecid\n")); err != nil {
+		t.Fatalf("write mismatched loose ref: %v", err)
+	}
+
+	issues, err := store.MissingLocalStateIssues()
+	if err != nil {
+		t.Fatalf("MissingLocalStateIssues: %v", err)
+	}
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue, "index work-items-latest loose ref CID bafkfakecid does not match reference set CID") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected loose ref mismatch issue, got=%v", issues)
+	}
+}
+
+func TestMissingLocalStateIssuesFlagsMismatchedStructuredCacheCID(t *testing.T) {
+	root := t.TempDir()
+	store := NewStore(root)
+
+	items := []model.WorkItem{
+		{Repo: "repo", Branch: "main", WorkID: "TODO-ravud", Status: "open"},
+	}
+	if err := store.AppendWorkItems(items); err != nil {
+		t.Fatalf("append work items: %v", err)
+	}
+
+	if err := writeBytesFile(store.structuredIndexPath("work-items-latest"), []byte(`{"version":"cas-index-v1","items":[]}`)); err != nil {
+		t.Fatalf("write mismatched structured cache: %v", err)
+	}
+
+	issues, err := store.MissingLocalStateIssues()
+	if err != nil {
+		t.Fatalf("MissingLocalStateIssues: %v", err)
+	}
+	found := false
+	for _, issue := range issues {
+		if strings.Contains(issue, "index work-items-latest cache") &&
+			strings.Contains(issue, "work-observation/work-items-latest.json") &&
+			strings.Contains(issue, "does not match reference set CID") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected structured cache mismatch issue, got=%v", issues)
+	}
+}
