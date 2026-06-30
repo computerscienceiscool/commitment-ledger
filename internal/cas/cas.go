@@ -9,11 +9,15 @@ import (
 )
 
 type Store struct {
-	Root string
+	Root    string
+	Profile string
 }
 
 func New(root string) *Store {
-	return &Store{Root: root}
+	return &Store{
+		Root:    root,
+		Profile: DefaultProfile,
+	}
 }
 
 func (s *Store) Put(data []byte) (string, error) {
@@ -34,17 +38,44 @@ func (s *Store) Put(data []byte) (string, error) {
 }
 
 func (s *Store) Get(id string) ([]byte, error) {
-	data, err := os.ReadFile(s.Path(id))
-	if err != nil {
-		return nil, fmt.Errorf("read cas object %q: %w", id, err)
+	paths := []string{s.Path(id)}
+	if legacy := s.LegacyPath(id); legacy != paths[0] {
+		paths = append(paths, legacy)
 	}
-	return data, nil
+	var lastErr error
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read cas object %q: %w", id, err)
+		}
+	}
+	return nil, fmt.Errorf("read cas object %q: %w", id, lastErr)
 }
 
 func (s *Store) Path(id string) string {
+	return s.pathForProfile(s.Profile, id)
+}
+
+func (s *Store) LegacyPath(id string) string {
 	prefix := id
 	if len(prefix) > 6 {
 		prefix = prefix[:6]
 	}
 	return filepath.Join(s.Root, "data", "cas", prefix, id+".bin")
+}
+
+func (s *Store) pathForProfile(profile string, id string) string {
+	prefix := id
+	if len(prefix) > 6 {
+		prefix = prefix[:6]
+	}
+	base := filepath.Join(s.Root, "data", "cas")
+	if profile != "" {
+		base = filepath.Join(base, profile)
+	}
+	return filepath.Join(base, prefix, id+".bin")
 }

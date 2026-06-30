@@ -33,7 +33,8 @@ That means two different kinds of incompleteness need to stay separate:
 - No richer shared trust-accounting view yet beyond local policy checks.
 - No explicit migration story from these local protocol docs to any future
   upstream frozen specs yet.
-- No native reference-set artifact layer yet beyond local refs and indexes.
+- No portable reference-set artifact layer yet; the branch work only adds
+  local structured reference-set files for operator-side state.
 - No explicit Git-bridge mapping, loss, or refusal semantics yet for native
   CAS-first state.
 - No chunk-manifest story yet for larger or directory-like logical objects.

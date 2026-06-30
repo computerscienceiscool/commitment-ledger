@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"commitment-ledger/internal/model"
 )
@@ -26,6 +25,14 @@ func (s *Store) indexPath(parts ...string) string {
 	return filepath.Join(segments...)
 }
 
+func (s *Store) structuredIndexPath(name string) string {
+	return s.indexPath(referenceSetDirectoryForIndex(name), name+".json")
+}
+
+func (s *Store) legacyIndexPath(name string) string {
+	return s.indexPath(name + ".json")
+}
+
 func (s *Store) persistIndex(name string, payload any) error {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -35,19 +42,50 @@ func (s *Store) persistIndex(name string, payload any) error {
 	if err != nil {
 		return fmt.Errorf("store %s index in cas: %w", name, err)
 	}
+	setName := referenceSetNameForIndex(name)
+	set, err := s.loadOrInitReferenceSet(setName)
+	if err != nil {
+		return err
+	}
+	set.Entries[name] = referenceEntry{CID: id}
+	if err := s.persistReferenceSet(setName, set); err != nil {
+		return fmt.Errorf("persist %s in reference set %s: %w", name, setName, err)
+	}
 	if err := writeBytesFile(s.refPath(name+".ref"), []byte(id+"\n")); err != nil {
 		return fmt.Errorf("write %s ref: %w", name, err)
 	}
-	if err := writeBytesFile(s.indexPath(name+".json"), body); err != nil {
+	if err := writeBytesFile(s.structuredIndexPath(name), body); err != nil {
+		return fmt.Errorf("write %s structured cache: %w", name, err)
+	}
+	if err := writeBytesFile(s.legacyIndexPath(name), body); err != nil {
 		return fmt.Errorf("write %s cache: %w", name, err)
 	}
 	return nil
 }
 
 func (s *Store) loadIndex(name string, out any) (bool, error) {
+	for _, setName := range []string{referenceSetNameForIndex(name), legacyReferenceSetName} {
+		if setName == "" {
+			continue
+		}
+		if set, ok, err := s.loadReferenceSet(setName); err != nil {
+			return false, err
+		} else if ok {
+			if entry, ok := set.Entries[name]; ok && entry.CID != "" {
+				data, casErr := s.CAS.Get(entry.CID)
+				if casErr == nil {
+					if err := json.Unmarshal(data, out); err != nil {
+						return false, fmt.Errorf("decode %s cas index %q from reference set %s: %w", name, entry.CID, setName, err)
+					}
+					return true, nil
+				}
+			}
+		}
+	}
+
 	refBody, err := os.ReadFile(s.refPath(name + ".ref"))
 	if err == nil {
-		id := strings.TrimSpace(string(refBody))
+		id := string(trimTrailingWhitespace(refBody))
 		if id != "" {
 			data, casErr := s.CAS.Get(id)
 			if casErr == nil {
@@ -61,15 +99,17 @@ func (s *Store) loadIndex(name string, out any) (bool, error) {
 		return false, fmt.Errorf("read %s ref: %w", name, err)
 	}
 
-	cacheBody, err := os.ReadFile(s.indexPath(name + ".json"))
-	if err == nil {
-		if err := json.Unmarshal(cacheBody, out); err != nil {
-			return false, fmt.Errorf("decode %s cache: %w", name, err)
+	for _, cachePath := range []string{s.structuredIndexPath(name), s.legacyIndexPath(name)} {
+		cacheBody, err := os.ReadFile(cachePath)
+		if err == nil {
+			if err := json.Unmarshal(cacheBody, out); err != nil {
+				return false, fmt.Errorf("decode %s cache %s: %w", name, cachePath, err)
+			}
+			return true, nil
 		}
-		return true, nil
-	}
-	if !os.IsNotExist(err) {
-		return false, fmt.Errorf("read %s cache: %w", name, err)
+		if !os.IsNotExist(err) {
+			return false, fmt.Errorf("read %s cache %s: %w", name, cachePath, err)
+		}
 	}
 	return false, nil
 }

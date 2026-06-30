@@ -170,6 +170,8 @@ stone toward a more native reference-set model:
 
 - refs are not just mutable convenience pointers
 - they are candidates for durable PromiseGrid-facing reference-set semantics
+- one generic head file is too vague; named state-family sets are a better
+  local approximation of the PromiseGrid direction
 - Git-like branch or tag behavior, if ever needed, should be treated as a
   bridge adapter over native state rather than the canonical source
 
@@ -236,6 +238,8 @@ If Commitment Ledger adopts Option B, the storage contract would become:
 ### Secondary but durable
 
 - local refs or reference-set views naming important heads
+- local state-family reference sets such as work observation heads, commitment
+  state heads, and artifact exchange heads
 - local indexes that can be rebuilt from CAS and refs
 - bridge metadata when Git import/export/push/pull is used as an adapter rather
   than a source of truth
@@ -274,18 +278,20 @@ One possible local layout for Option B:
 ```text
 data/
   cas/
-    <cas-profile-pcid>/
+    <implementation-local-cas-profile>/
       <chunk-cid>.bin
   refs/
     repos/<repo>/<branch>/latest-scan
     work/<repo>/<branch>/<work-id>
     commitments/<commitment-id>
     artifacts/<artifact-cid>
-    reference-sets/<set-name>
+    reference-sets/work-observation-heads
+    reference-sets/commitment-state-heads
+    reference-sets/artifact-exchange-heads
   indexes/
-    by-commitment/<commitment-id>.json
-    by-artifact/<artifact-cid>.json
-    by-repo/<repo>/<branch>.json
+    work-observation/<index-name>.json
+    commitment-state/<index-name>.json
+    artifact-exchange/<index-name>.json
   bridges/
     git/<bridge-name>.json
 records/
@@ -296,8 +302,12 @@ records/
 Important discipline:
 
 - `data/cas/` is primary durable content
-- `data/refs/` names current local heads
-- `data/indexes/` is rebuildable local acceleration
+- the current branch can use one implementation-local CAS profile name without
+  claiming that upstream PromiseGrid has already frozen the final shared
+  CAS-profile pCID for this app family
+- `data/refs/` names current local heads and structured state-family reference
+  sets
+- `data/indexes/` is rebuildable local acceleration grouped by state family
 - `data/bridges/` records adapter-specific state and should not quietly become
   canonical PromiseGrid state
 - `records/` is human-facing projection only
